@@ -2,6 +2,7 @@ import unittest
 import asyncio
 import os
 import shutil
+from datetime import timedelta
 from dfns import DFns, Result, RetryPolicy
 from dfns.backend.sqlite import SQLiteBackend
 from dfns.registry import registry
@@ -20,6 +21,15 @@ async def retryable_task(succeed_on_attempt: int):
     pass
 
 ATTEMPT_COUNTER = {}
+RECOVERY_TEST_STATE = {"first_run": True}
+
+@DFns.durable()
+async def recovery_task():
+    # If it's the first run (simulated crash), we sleep to allow cancellation
+    if RECOVERY_TEST_STATE["first_run"]:
+        RECOVERY_TEST_STATE["first_run"] = False
+        await asyncio.sleep(10) 
+    return "recovered"
 
 @DFns.durable(retry_policy=RetryPolicy(max_attempts=4, initial_delay=0.01))
 async def stateful_retry_task(exec_id_for_counter: str):
@@ -129,6 +139,81 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         lp_worker_task.cancel()
         try:
             await lp_worker_task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_lease_expiration_crash(self):
+        RECOVERY_TEST_STATE["first_run"] = True
+        
+        # 1. Stop default worker
+        self.worker_task.cancel()
+        try:
+            await self.worker_task
+        except asyncio.CancelledError:
+            pass
+            
+        # 2. Start worker with short lease
+        short_lease = timedelta(seconds=1)
+        worker1 = asyncio.create_task(self.executor.serve(lease_duration=short_lease, poll_interval=0.1))
+        
+        # 3. Dispatch task
+        exec_id = await self.executor.dispatch(recovery_task)
+        
+        # 4. Wait for it to be running
+        target_task = None
+        start_wait = asyncio.get_running_loop().time()
+        while asyncio.get_running_loop().time() - start_wait < 5:
+            tasks = await self.backend.list_tasks_for_execution(exec_id)
+            root_task = next((t for t in tasks if t.kind == "orchestrator"), None)
+            
+            if root_task and root_task.state == "running":
+                # Try to find the python task corresponding to this
+                current = asyncio.current_task()
+                for t in asyncio.all_tasks():
+                    if t is current or t is worker1:
+                        continue
+                    # Check for _handle_task in coroutine name
+                    if "handle_task" in str(t) or "handle_task" in repr(t):
+                        target_task = t
+                        break
+                if target_task:
+                    break
+            await asyncio.sleep(0.05)
+            
+        self.assertIsNotNone(target_task, "Could not find worker handler task")
+        
+        # 5. Simulate Crash: Cancel the handler task
+        target_task.cancel()
+        try:
+            await target_task
+        except asyncio.CancelledError:
+            pass
+            
+        # Stop worker1 loop too
+        worker1.cancel()
+        try:
+            await worker1
+        except asyncio.CancelledError:
+            pass
+            
+        # 6. Verify state is still "running" (simulating crash before update)
+        tasks = await self.backend.list_tasks_for_execution(exec_id)
+        root_task = next(t for t in tasks if t.kind == "orchestrator")
+        self.assertEqual(root_task.state, "running")
+        
+        # 7. Wait for lease to expire
+        await asyncio.sleep(1.5) 
+        
+        # 8. Start worker2
+        worker2 = asyncio.create_task(self.executor.serve(poll_interval=0.1))
+        
+        # 9. Wait for result
+        result = await self._wait_for_result(exec_id)
+        self.assertEqual(result.value, "recovered")
+        
+        worker2.cancel()
+        try:
+            await worker2
         except asyncio.CancelledError:
             pass
 

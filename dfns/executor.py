@@ -447,7 +447,8 @@ class DFns:
                     worker_id=worker_id,
                     queues=queues,
                     tags=tags,
-                    now=datetime.now()
+                    now=datetime.now(),
+                    lease_duration=lease_duration
                 )
                 
                 if task:

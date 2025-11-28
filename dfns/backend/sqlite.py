@@ -248,12 +248,18 @@ class SQLiteBackend(Backend):
         queues: List[str] | None = None,
         tags: List[str] | None = None,
         now: datetime | None = None,
+        lease_duration: timedelta | None = None,
     ) -> TaskRecord | None:
         if now is None:
             now = datetime.now()
+        if lease_duration is None:
+            lease_duration = timedelta(minutes=5)
+            
+        expires_at = now + lease_duration
         
+        # Helper for queues condition
         queue_clause = ""
-        params: List[Any] = [worker_id, now, now, now]
+        params: List[Any] = [worker_id, expires_at, now, now]
         if queues:
             placeholders = ",".join(["?"] * len(queues))
             queue_clause = f"AND (queue IN ({placeholders}) OR queue IS NULL)"
@@ -261,15 +267,20 @@ class SQLiteBackend(Backend):
         else:
             queue_clause = "AND 1=1"
 
+        # We need a transaction
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
+            # Using sub-select for claim
+            # Claim if pending OR (running AND lease expired)
             query = f"""
                 UPDATE tasks
                 SET state='running', worker_id=?, lease_expires_at=?, started_at=?
                 WHERE id = (
                     SELECT id FROM tasks
-                    WHERE state='pending'
-                      AND (lease_expires_at IS NULL OR lease_expires_at < ?)
+                    WHERE (
+                        state='pending'
+                        OR (state='running' AND lease_expires_at < ?)
+                    )
                       {queue_clause}
                     ORDER BY priority DESC, created_at ASC
                     LIMIT 1

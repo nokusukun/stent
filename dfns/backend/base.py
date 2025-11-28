@@ -23,6 +23,7 @@ class Backend(Protocol):
         queues: List[str] | None = None,
         tags: List[str] | None = None,
         now: datetime | None = None,
+        lease_duration: timedelta | None = None,
     ) -> TaskRecord | None: ...
 
     async def list_tasks_for_execution(self, execution_id: str) -> List[TaskRecord]: ...
