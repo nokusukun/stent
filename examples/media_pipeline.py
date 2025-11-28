@@ -77,7 +77,7 @@ async def package_assets(file_name: str, transcription: str, thumbs: list[str], 
 
 # --- Orchestrator ---
 
-@DFns.durable(queue="main")
+@DFns.durable()
 async def media_processing_pipeline(file_name: str) -> Result[dict, Exception]:
     try:
         # Step 1: Validation
@@ -183,10 +183,14 @@ def print_dashboard(statuses: list[dict], worker_activities: list, start_time: f
     print(f"{'Worker ID':<38} | {'Step Name':<35}")
     print("-" * 80)
     
+    printed_workers = set()
     if not worker_activities:
         print(f"{'Idle':<38} | {'Waiting for tasks...':<35}")
     else:
         for task in worker_activities:
+            if task.worker_id in printed_workers:
+                continue
+            printed_workers.add(task.worker_id)
             wid = task.worker_id or "Unknown"
             step = task.step_name
             duration_s = ""
@@ -221,21 +225,21 @@ async def main():
         t = asyncio.create_task(executor.serve(
             max_concurrency=1, 
             poll_interval=0.1,
-            queues=[ACTIVITY_QUEUE, "gpu_tasks"],
-            worker_id=f"ActivityWorker-{i+1}"
+            queues=[ACTIVITY_QUEUE, "gpu_tasks", None],
+            worker_id=f"Worker-{i+1}"
         ))
         worker_tasks.append(t)
 
-    # 3 Orchestrator Workers (Manage the workflow state)
-    # They listen to the default queue (None) where orchestrators are dispatched
-    for i in range(3):
-        t = asyncio.create_task(executor.serve(
-            max_concurrency=1, 
-            poll_interval=0.1,
-            queues=["main"], # Listen to default queue
-            worker_id=f"Orchestrator-{i+1}"
-        ))
-        worker_tasks.append(t)
+    # # 3 Orchestrator Workers (Manage the workflow state)
+    # # They listen to the default queue (None) where orchestrators are dispatched
+    # for i in range(3):
+    #     t = asyncio.create_task(executor.serve(
+    #         max_concurrency=1, 
+    #         poll_interval=0.1,
+    #         queues=[None], # Listen to default queue
+    #         worker_id=f"Orchestrator-{i+1}"
+    #     ))
+    #     worker_tasks.append(t)
     
     # Dispatch Jobs
     print(f"Dispatching {NUM_JOBS} jobs...")

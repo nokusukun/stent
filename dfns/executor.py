@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 current_execution_id: ContextVar[str | None] = ContextVar("dfns_execution_id", default=None)
 current_task_id: ContextVar[str | None] = ContextVar("dfns_task_id", default=None)
+current_worker_semaphore: ContextVar[asyncio.Semaphore | None] = ContextVar("dfns_worker_semaphore", default=None)
 
 class DFns:
     def __init__(
@@ -285,24 +286,33 @@ class DFns:
         return completed_task # Return completed_task, _call_durable_stub handles errors and result processing
 
     async def _wait_for_task(self, task_id: str, timeout: float | None = None) -> TaskRecord:
-        if self.notification_backend:
-            # Subscribe and wait
-            it = self.notification_backend.subscribe_to_task(task_id, timeout=timeout)
-            async for _ in it:
-                pass 
-            # After loop (completion or timeout), fetch latest
-            task = await self.backend.get_task(task_id)
-            return task
-        else:
-            # Poll
-            start = datetime.now()
-            while True:
+        # Release semaphore to allow other tasks to run while we wait (prevent deadlock in low concurrency)
+        sem = current_worker_semaphore.get()
+        if sem:
+            sem.release()
+            
+        try:
+            if self.notification_backend:
+                # Subscribe and wait
+                it = self.notification_backend.subscribe_to_task(task_id, timeout=timeout)
+                async for _ in it:
+                    pass 
+                # After loop (completion or timeout), fetch latest
                 task = await self.backend.get_task(task_id)
-                if task and task.state in ("completed", "failed"):
-                    return task
-                if timeout and (datetime.now() - start).total_seconds() > timeout:
-                     raise TimeoutError(f"Task {task_id} timed out")
-                await asyncio.sleep(0.1)
+                return task
+            else:
+                # Poll
+                start = datetime.now()
+                while True:
+                    task = await self.backend.get_task(task_id)
+                    if task and task.state in ("completed", "failed"):
+                        return task
+                    if timeout and (datetime.now() - start).total_seconds() > timeout:
+                         raise TimeoutError(f"Task {task_id} timed out")
+                    await asyncio.sleep(0.1)
+        finally:
+            if sem:
+                await sem.acquire()
 
     async def state_of(self, execution_id: str) -> ExecutionState:
         record = await self.backend.get_execution(execution_id)
@@ -461,6 +471,7 @@ class DFns:
         token_exec = current_execution_id.set(task.execution_id)
         token_task = current_task_id.set(task.id)
         token_executor = current_executor.set(self)
+        token_sem = current_worker_semaphore.set(sem)
         
         try:
             # Check execution state or timeout
@@ -622,6 +633,7 @@ class DFns:
             current_execution_id.reset(token_exec)
             current_task_id.reset(token_task)
             current_executor.reset(token_executor)
+            current_worker_semaphore.reset(token_sem)
 
 # Context var for executor instance
 current_executor: ContextVar[Optional[DFns]] = ContextVar("dfns_executor", default=None)
