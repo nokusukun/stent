@@ -61,18 +61,22 @@ class AsyncConnection:
         return ExecuteContext(self, sql, parameters)
         
     async def _execute_impl(self, sql, parameters):
+        assert self._conn is not None
         cursor = await asyncio.to_thread(self._conn.execute, sql, parameters)
         return AsyncCursor(cursor)
 
     async def commit(self):
+        assert self._conn is not None
         await asyncio.to_thread(self._conn.commit)
         
     @property
     def row_factory(self):
+        assert self._conn is not None
         return self._conn.row_factory
     
     @row_factory.setter
     def row_factory(self, val):
+        assert self._conn is not None
         self._conn.row_factory = val
 
 def connect(path: str) -> AsyncConnection:

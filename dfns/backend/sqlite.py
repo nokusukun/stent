@@ -1,4 +1,5 @@
-import dfns.utils.async_sqlite as aiosqlite
+import aiosqlite
+import sqlite3
 import json
 import logging # Import logging
 from datetime import datetime, timedelta
@@ -14,9 +15,9 @@ def _adapt_datetime(dt: datetime) -> str:
 def _convert_datetime(val: bytes) -> datetime:
     return datetime.fromisoformat(val.decode("utf-8"))
 
-aiosqlite.register_adapter(datetime, _adapt_datetime)
-aiosqlite.register_converter("datetime", _convert_datetime)
-aiosqlite.register_converter("TIMESTAMP", _convert_datetime)
+sqlite3.register_adapter(datetime, _adapt_datetime)
+sqlite3.register_converter("datetime", _convert_datetime)
+sqlite3.register_converter("TIMESTAMP", _convert_datetime)
 
 class SQLiteBackend(Backend):
     def __init__(self, db_path: str):
@@ -159,7 +160,7 @@ class SQLiteBackend(Backend):
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             query = "SELECT * FROM executions"
-            params = []
+            params: List[Any] = []
             if state:
                 query += " WHERE state = ?"
                 params.append(state)
@@ -167,7 +168,7 @@ class SQLiteBackend(Backend):
             query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
             
-            async with db.execute(query, params) as cursor:
+            async with db.execute(query, tuple(params)) as cursor:
                 rows = await cursor.fetchall()
                 results = []
                 for row in rows:
@@ -192,7 +193,7 @@ class SQLiteBackend(Backend):
     async def count_tasks(self, queue: str | None = None, state: str | None = None) -> int:
         async with aiosqlite.connect(self.db_path) as db:
             query = "SELECT COUNT(*) FROM tasks WHERE 1=1"
-            params = []
+            params: List[Any] = []
             if queue:
                 query += " AND queue = ?"
                 params.append(queue)
@@ -200,7 +201,7 @@ class SQLiteBackend(Backend):
                 query += " AND state = ?"
                 params.append(state)
             
-            async with db.execute(query, params) as cursor:
+            async with db.execute(query, tuple(params)) as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
 
@@ -230,7 +231,7 @@ class SQLiteBackend(Backend):
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             query = "SELECT * FROM tasks"
-            params = []
+            params: List[Any] = []
             if state:
                 query += " WHERE state = ?"
                 params.append(state)
@@ -238,7 +239,7 @@ class SQLiteBackend(Backend):
             query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
             
-            async with db.execute(query, params) as cursor:
+            async with db.execute(query, tuple(params)) as cursor:
                 rows = await cursor.fetchall()
                 return [self._row_to_task(row) for row in rows]
 
@@ -290,7 +291,7 @@ class SQLiteBackend(Backend):
                 )
                 RETURNING *
             """
-            async with db.execute(query, params) as cursor:
+            async with db.execute(query, tuple(params)) as cursor:
                 row = await cursor.fetchone()
                 await db.commit()
                 if row:

@@ -160,7 +160,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         exec_id = await self.executor.dispatch(recovery_task)
         
         # 4. Wait for it to be running
-        target_task = None
+        target_task: asyncio.Task | None = None
         start_wait = asyncio.get_running_loop().time()
         while asyncio.get_running_loop().time() - start_wait < 5:
             tasks = await self.backend.list_tasks_for_execution(exec_id)

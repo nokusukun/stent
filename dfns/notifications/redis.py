@@ -41,10 +41,10 @@ class RedisBackend(NotificationBackend):
 
             if expiry:
                 try:
-                    async with asyncio.expiry(expiry):
+                    async with asyncio.timeout(expiry):
                         async for item in _listen():
                             yield item
-                except asyncio.ExpiryError:
+                except asyncio.TimeoutError:
                     pass
             else:
                  async for item in _listen():
@@ -80,10 +80,10 @@ class RedisBackend(NotificationBackend):
 
             if expiry:
                 try:
-                    async with asyncio.expiry(expiry):
+                    async with asyncio.timeout(expiry):
                         async for item in _listen():
                             yield item
-                except asyncio.ExpiryError:
+                except asyncio.TimeoutError:
                     pass
             else:
                  async for item in _listen():

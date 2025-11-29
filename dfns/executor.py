@@ -412,7 +412,7 @@ class DFns:
         try:
             if self.notification_backend:
                 # Subscribe and wait
-                it = await self.notification_backend.subscribe_to_task(task_id, expiry=expiry)
+                it = self.notification_backend.subscribe_to_task(task_id, expiry=expiry)
                 async for _ in it:
                     pass 
                 # After loop (completion or expiry), fetch latest
@@ -485,7 +485,7 @@ class DFns:
             pass # Not done yet
 
         if self.notification_backend:
-            it = await self.notification_backend.subscribe_to_execution(execution_id, expiry=expiry)
+            it = self.notification_backend.subscribe_to_execution(execution_id, expiry=expiry)
             try:
                 async for _ in it:
                     pass

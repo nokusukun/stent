@@ -15,8 +15,7 @@ async def fetch_external_data(url: str) -> Result[str, Exception]:
     await asyncio.sleep(0.3)
     if "fail" in url:
         raise ConnectionError(f"Failed to connect to {url}")
-    return Result.Ok(f"<data from {url}>
-")
+    return Result.Ok(f"<data from {url}>")
 
 @DFns.durable(cached=True, version="v1.0")
 async def process_data_heavy(raw_data: str) -> Result[str, Exception]:
