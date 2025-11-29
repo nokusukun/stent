@@ -47,7 +47,7 @@ class TestHelpers(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
         
         for eid in ids:
-            await self.executor.wait_for(eid, timeout=2.0)
+            await self.executor.wait_for(eid, expiry=2.0)
             
         executions = await self.executor.list_executions(state="completed")
         self.assertEqual(len(executions), 5)

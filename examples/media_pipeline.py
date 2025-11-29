@@ -31,7 +31,7 @@ async def validate_upload(file_name: str) -> bool:
 @DFns.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=1.0), queue=ACTIVITY_QUEUE)
 async def scan_for_safety(file_name: str) -> str:
     await asyncio.sleep(random.uniform(1.0, 2.5))
-    if random.random() < 0.05: raise ConnectionError("Safety API timeout")
+    if random.random() < 0.05: raise ConnectionError("Safety API expiry")
     if random.random() < 0.02: return "flagged"
     return "clean"
 

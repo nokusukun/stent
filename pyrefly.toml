@@ -1,0 +1,17 @@
+# Pyrefly Configuration
+
+# Directories to analyze
+project-includes = [
+    "dfns",
+    "examples",
+    "tests"
+]
+
+# Target Python version and platform
+python-version = "3.12"
+python-platform = "darwin"
+
+# Error reporting settings
+[errors]
+bad-assignment = "error"
+bad-return = "error"

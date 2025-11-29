@@ -79,9 +79,9 @@ async def complex_data_pipeline(config: dict) -> Result[dict, Exception]:
 
 # --- Main Execution Logic ---
 
-async def run_pipeline(executor: DFns, config: dict, timeout_str: str | None = None):
+async def run_pipeline(executor: DFns, config: dict, expiry_str: str | None = None):
     print(f"\n--- Running Pipeline with config: {config} ---")
-    execution_id = await executor.dispatch(complex_data_pipeline, config, timeout=timeout_str)
+    execution_id = await executor.dispatch(complex_data_pipeline, config, expiry=expiry_str)
     print(f"Dispatched pipeline execution ID: {execution_id}")
 
     while True:
@@ -127,8 +127,8 @@ async def main():
     # Second run with same data for processing (process_data_heavy is cached=True) should hit cache
     await run_pipeline(executor, {"url1": "http://cache.com/data1", "url2": "http://cache.com/data2", "notification_email": "cache_again@example.com"})
     
-    # Scenario 4: Timeout an execution
-    await run_pipeline(executor, {"url1": "http://slow.com/data", "url2": "http://slow.com/data"}, timeout_str="0.1s") # Will timeout due to long process_data_heavy
+    # Scenario 4: expiry an execution
+    await run_pipeline(executor, {"url1": "http://slow.com/data", "url2": "http://slow.com/data"}, expiry_str="0.1s") # Will expiry due to long process_data_heavy
 
     # Scenario 5: Notification failure (non-retryable within send_notification if it expects clean recipient)
     # Note: send_notification only has basic exception handling, not specific retry_for for ValueError

@@ -37,7 +37,7 @@ class RetryPolicy:
     jitter: float = 0.1
     retry_for: tuple[type[BaseException], ...] = (Exception,)
 
-def compute_retry_delay(policy: RetryPolicy, attempt: int, *, rng: random.Random = random) -> float:
+def compute_retry_delay(policy: RetryPolicy, attempt: int, *, rng: random.Random = random.Random()) -> float:
     # attempt is 1-based (1 = first retry)
     # wait = initial * (factor ^ (attempt - 1))
     delay = policy.initial_delay * (policy.backoff_factor ** (attempt - 1))
@@ -72,7 +72,7 @@ class ExecutionRecord:
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
-    timeout_at: datetime | None
+    expiry_at: datetime | None
     progress: List[ExecutionProgress]
     tags: List[str]
     priority: int
@@ -121,7 +121,7 @@ class ExecutionState:
     @property
     def progress_str(self) -> str:
         # Simple implementation
-        parts = []
+        parts: List[str] = []
         for p in self.progress:
             if not p.completed_at:
                 continue

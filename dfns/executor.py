@@ -20,6 +20,27 @@ from dfns.utils.time import parse_duration
 
 logger = logging.getLogger(__name__)
 
+class ExpiryError(TimeoutError):
+    pass
+
+# Backends helper
+class Backends:
+    @staticmethod
+    def SQLiteBackend(path: str) -> Backend:
+        from dfns.backend.sqlite import SQLiteBackend
+        return SQLiteBackend(path)
+
+    @staticmethod
+    def MongoBackend(url: str, db_name: str) -> Backend:
+        # Placeholder
+        raise NotImplementedError("Mongo backend not implemented yet")
+
+class Notifications:
+    @staticmethod
+    def RedisBackend(url: str) -> NotificationBackend:
+        from dfns.notifications.redis import RedisBackend
+        return RedisBackend(url)
+
 # Capture original sleep before any patching
 _original_sleep = asyncio.sleep
 
@@ -28,6 +49,8 @@ current_task_id: ContextVar[str | None] = ContextVar("dfns_task_id", default=Non
 current_worker_semaphore: ContextVar[asyncio.Semaphore | None] = ContextVar("dfns_worker_semaphore", default=None)
 
 class DFns:
+    backends = Backends
+
     def __init__(
         self,
         backend: Backend,
@@ -35,6 +58,8 @@ class DFns:
         notification_backend: NotificationBackend | None = None,
     ):
         self.backend = backend
+        self.serializer: Serializer
+
         if isinstance(serializer, str):
             if serializer == "json":
                 self.serializer = JsonSerializer()
@@ -80,8 +105,8 @@ class DFns:
                  logger.warning(f"Detected asyncio.sleep({delay}) inside a durable function. Use 'await dfns.sleep(...)' to release worker capacity.")
             return await original_sleep(delay, result)
         
-        warning_sleep._is_dfns_patch = True
-        asyncio.sleep = warning_sleep
+        warning_sleep._is_dfns_patch = True # pyrefly: ignore
+        asyncio.sleep = warning_sleep # pyrefly: ignore
 
     async def schedule(
         self, 
@@ -240,16 +265,17 @@ class DFns:
                     raise err
                 raise Exception(str(err))
             raise Exception("Task failed without error info")
-            
-        res = executor.serializer.loads(completed_task.result)
+
+        completed_task_result = completed_task.result or b"null"
+        res = executor.serializer.loads(completed_task_result)
         
         # Store cache/idempotency if enabled and key was generated after successful execution
         if key:
             if meta.cached:
-                await executor.backend.set_cached_result(key, completed_task.result)
+                await executor.backend.set_cached_result(key, completed_task_result)
                 logger.debug(f"Stored cached result for {meta.name} with key {key}")
             if meta.idempotent:
-                await executor.backend.set_idempotency_result(key, completed_task.result)
+                await executor.backend.set_idempotency_result(key, completed_task_result)
                 logger.debug(f"Stored idempotency result for {meta.name} with key {key}")
             
         return res
@@ -258,7 +284,7 @@ class DFns:
         self,
         fn: Callable[..., Awaitable[Any]],
         *args,
-        timeout: str | timedelta | None = None,
+        expiry: str | timedelta | None = None,
         delay: str | dict | timedelta | None = None,
         tags: List[str] | None = None,
         priority: int = 0,
@@ -273,8 +299,8 @@ class DFns:
             # Better to assume it was decorated.
             pass
 
-        if isinstance(timeout, str):
-            timeout = parse_duration(timeout)
+        if isinstance(expiry, str):
+            expiry = parse_duration(expiry)
             
         scheduled_for = None
         if delay:
@@ -282,14 +308,14 @@ class DFns:
                 delay = parse_duration(delay)
             scheduled_for = datetime.now() + delay
         
-        timeout_at = (datetime.now() + timeout) if timeout else None
-        if scheduled_for and timeout:
-             # Timeout should start AFTER scheduled start? 
-             # For now simple logic: timeout is absolute or relative to dispatch?
+        expiry_at = (datetime.now() + expiry) if expiry else None
+        if scheduled_for and expiry:
+             # expiry should start AFTER scheduled start? 
+             # For now simple logic: expiry is absolute or relative to dispatch?
              # Standard: relative to dispatch usually, but if delayed, maybe relative to start.
-             # Let's keep it simple: timeout_at is absolute. If delay > timeout, it times out immediately.
-             # User should set timeout appropriately.
-             timeout_at = scheduled_for + timeout
+             # Let's keep it simple: expiry_at is absolute. If delay > expiry, it times out immediately.
+             # User should set expiry appropriately.
+             expiry_at = scheduled_for + expiry
 
         execution_id = str(uuid.uuid4())
         
@@ -303,7 +329,7 @@ class DFns:
             created_at=datetime.now(),
             started_at=None,
             completed_at=None,
-            timeout_at=timeout_at,
+            expiry_at=expiry_at,
             progress=[],
             tags=tags or (meta.tags if meta else []),
             priority=priority,
@@ -341,8 +367,8 @@ class DFns:
         idempotency_key: str | None,
         delay: timedelta | None = None
     ) -> TaskRecord:
-        exec_id = current_execution_id.get()
-        parent_id = current_task_id.get()
+        exec_id = current_execution_id.get() or ""
+        parent_id = current_task_id.get() or ""
         
         scheduled_for = None
         if delay:
@@ -377,7 +403,7 @@ class DFns:
         
         return completed_task # Return completed_task, _call_durable_stub handles errors and result processing
 
-    async def _wait_for_task(self, task_id: str, timeout: float | None = None) -> TaskRecord:
+    async def _wait_for_task(self, task_id: str, expiry: float | None = None) -> TaskRecord:
         # Release semaphore to allow other tasks to run while we wait (prevent deadlock in low concurrency)
         sem = current_worker_semaphore.get()
         if sem:
@@ -386,11 +412,13 @@ class DFns:
         try:
             if self.notification_backend:
                 # Subscribe and wait
-                it = self.notification_backend.subscribe_to_task(task_id, timeout=timeout)
+                it = await self.notification_backend.subscribe_to_task(task_id, expiry=expiry)
                 async for _ in it:
                     pass 
-                # After loop (completion or timeout), fetch latest
+                # After loop (completion or expiry), fetch latest
                 task = await self.backend.get_task(task_id)
+                if not task:
+                    raise ValueError(f"Task not found after notification: {task_id}")
                 return task
             else:
                 # Poll
@@ -399,8 +427,8 @@ class DFns:
                     task = await self.backend.get_task(task_id)
                     if task and task.state in ("completed", "failed"):
                         return task
-                    if timeout and (datetime.now() - start).total_seconds() > timeout:
-                         raise TimeoutError(f"Task {task_id} timed out")
+                    if expiry and (datetime.now() - start).total_seconds() > expiry:
+                         raise ExpiryError(f"Task {task_id} timed out")
                     await _original_sleep(0.1)
         finally:
             if sem:
@@ -445,7 +473,7 @@ class DFns:
             
         raise Exception("No result available")
 
-    async def wait_for(self, execution_id: str, timeout: float | None = None) -> Result[Any, Any]:
+    async def wait_for(self, execution_id: str, expiry: float | None = None) -> Result[Any, Any]:
         """
         Blocks until the execution with the given ID is completed, failed, or timed out.
         Returns the result of the execution.
@@ -457,12 +485,12 @@ class DFns:
             pass # Not done yet
 
         if self.notification_backend:
-            it = self.notification_backend.subscribe_to_execution(execution_id, timeout=timeout)
+            it = await self.notification_backend.subscribe_to_execution(execution_id, expiry=expiry)
             try:
                 async for _ in it:
                     pass
             except asyncio.TimeoutError:
-                raise TimeoutError(f"Timed out waiting for execution {execution_id}")
+                raise ExpiryError(f"Timed out waiting for execution {execution_id}")
         else:
             # Polling fallback
             start = datetime.now()
@@ -471,8 +499,8 @@ class DFns:
                 if state.state in ("completed", "failed", "timed_out", "cancelled"):
                     break
                 
-                if timeout and (datetime.now() - start).total_seconds() > timeout:
-                    raise TimeoutError(f"Timed out waiting for execution {execution_id}")
+                if expiry and (datetime.now() - start).total_seconds() > expiry:
+                    raise ExpiryError(f"Timed out waiting for execution {execution_id}")
                 
                 await asyncio.sleep(0.5)
 
@@ -602,12 +630,12 @@ class DFns:
         token_sem = current_worker_semaphore.set(sem)
         
         try:
-            # Check execution state or timeout
+            # Check execution state or expiry
             execution = await self.backend.get_execution(task.execution_id)
             if not execution:
                 raise ValueError(f"Execution {task.execution_id} not found")
             
-            if execution.timeout_at and datetime.now() > execution.timeout_at:
+            if execution.expiry_at and datetime.now() > execution.expiry_at:
                 execution.state = "timed_out"
                 execution.completed_at = datetime.now()
                 task.state = "failed"
@@ -659,11 +687,11 @@ class DFns:
             ))
 
             # Execute
-            if execution.timeout_at:
-                remaining = (execution.timeout_at - datetime.now()).total_seconds()
+            if execution.expiry_at:
+                remaining = (execution.expiry_at - datetime.now()).total_seconds()
                 if remaining <= 0:
                      # Already timed out
-                     raise TimeoutError("Execution timed out before start")
+                     raise ExpiryError("Execution timed out before start")
                 try:
                     async with asyncio.timeout(remaining):
                         result_val = await meta.fn(*args, **kwargs)
@@ -744,7 +772,9 @@ class DFns:
                 await self.backend.append_progress(task.execution_id, ExecutionProgress(
                      step=task.step_name, status="failed", detail=str(e)
                 ))
-                
+                if not execution: # pyrefly: ignore
+                    raise ValueError(f"Execution {task.execution_id} not found")
+
                 if task.kind == "orchestrator":
                     execution.state = "failed"
                     execution.error = task.error
@@ -766,23 +796,7 @@ class DFns:
 # Context var for executor instance
 current_executor: ContextVar[Optional[DFns]] = ContextVar("dfns_executor", default=None)
 
-# Backends helper
-class Backends:
-    @staticmethod
-    def SQLiteBackend(path: str) -> Backend:
-        from dfns.backend.sqlite import SQLiteBackend
-        return SQLiteBackend(path)
 
-    @staticmethod
-    def MongoBackend(url: str, db_name: str) -> Backend:
-        # Placeholder
-        raise NotImplementedError("Mongo backend not implemented yet")
-
-class Notifications:
-    @staticmethod
-    def RedisBackend(url: str) -> NotificationBackend:
-        from dfns.notifications.redis import RedisBackend
-        return RedisBackend(url)
 
 DFns.backends = Backends
 DFns.notifications = Notifications

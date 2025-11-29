@@ -35,8 +35,8 @@ class TestDeadlock(unittest.IsolatedAsyncioTestCase):
             exec_id = await self.executor.dispatch(deadlocking_orchestrator)
             
             # If fix works, this returns. If not, it times out.
-            # We set a generous timeout for the test
-            result = await self.executor.wait_for(exec_id, timeout=5.0)
+            # We set a generous expiry for the test
+            result = await self.executor.wait_for(exec_id, expiry=5.0)
             
             self.assertTrue(result.ok)
             self.assertEqual(result.value, "done")

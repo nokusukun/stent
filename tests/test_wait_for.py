@@ -1,3 +1,4 @@
+from dfns.executor import ExpiryError
 import unittest
 import asyncio
 import os
@@ -32,13 +33,13 @@ class TestWaitFor(unittest.IsolatedAsyncioTestCase):
         exec_id = await self.executor.dispatch(quick_task)
         
         # Should block until done
-        result = await self.executor.wait_for(exec_id, timeout=2.0)
+        result = await self.executor.wait_for(exec_id, expiry=2.0)
         
         self.assertTrue(result.ok)
         self.assertEqual(result.value, "done")
 
-    async def test_wait_for_timeout(self):
-        # We need a longer task than the wait timeout
+    async def test_wait_for_expiry(self):
+        # We need a longer task than the wait expiry
         @DFns.durable()
         async def slow_task():
             await asyncio.sleep(1.0)
@@ -46,11 +47,11 @@ class TestWaitFor(unittest.IsolatedAsyncioTestCase):
             
         exec_id = await self.executor.dispatch(slow_task)
         
-        with self.assertRaises(TimeoutError):
-            await self.executor.wait_for(exec_id, timeout=0.1)
+        with self.assertRaises(ExpiryError):
+            await self.executor.wait_for(exec_id, expiry=0.1)
 
         # Clean up by waiting properly
-        await self.executor.wait_for(exec_id, timeout=2.0)
+        await self.executor.wait_for(exec_id, expiry=2.0)
 
     async def test_wait_for_already_completed(self):
         exec_id = await self.executor.dispatch(quick_task)
@@ -59,7 +60,7 @@ class TestWaitFor(unittest.IsolatedAsyncioTestCase):
         
         # Now call wait_for, should return immediately
         start = asyncio.get_running_loop().time()
-        result = await self.executor.wait_for(exec_id, timeout=1.0)
+        result = await self.executor.wait_for(exec_id, expiry=1.0)
         end = asyncio.get_running_loop().time()
         
         self.assertTrue(result.ok)

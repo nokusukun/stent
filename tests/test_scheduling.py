@@ -81,7 +81,7 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
         worker_task = asyncio.create_task(self.dfns.serve(poll_interval=0.1))
         
         try:
-            result = await self.dfns.wait_for(exec_id, timeout=5.0)
+            result = await self.dfns.wait_for(exec_id, expiry=5.0)
             duration = (datetime.now() - start).total_seconds()
             
             self.assertEqual(result.or_raise(), "done")

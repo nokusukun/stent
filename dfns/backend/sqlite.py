@@ -37,7 +37,7 @@ class SQLiteBackend(Backend):
                     created_at TIMESTAMP,
                     started_at TIMESTAMP,
                     completed_at TIMESTAMP,
-                    timeout_at TIMESTAMP,
+                    expiry_at TIMESTAMP,
                     tags TEXT,
                     priority INTEGER,
                     queue TEXT
@@ -111,7 +111,7 @@ class SQLiteBackend(Backend):
                 (
                     record.id, record.root_function, record.state, record.args, record.kwargs,
                     record.result, record.error, record.retries, record.created_at,
-                    record.started_at, record.completed_at, record.timeout_at,
+                    record.started_at, record.completed_at, record.expiry_at,
                     json.dumps(record.tags), record.priority, record.queue
                 )
             )
@@ -144,12 +144,12 @@ class SQLiteBackend(Backend):
             await db.execute("""
                 UPDATE executions SET
                     state=?, args=?, kwargs=?, result=?, error=?, retries=?,
-                    started_at=?, completed_at=?, timeout_at=?, tags=?,
+                    started_at=?, completed_at=?, expiry_at=?, tags=?,
                     priority=?, queue=?
                 WHERE id=?
             """, (
                 record.state, record.args, record.kwargs, record.result, record.error,
-                record.retries, record.started_at, record.completed_at, record.timeout_at,
+                record.retries, record.started_at, record.completed_at, record.expiry_at,
                 json.dumps(record.tags), record.priority, record.queue, record.id
             ))
             # Do NOT update progress here as it is managed via execution_progress table
@@ -417,7 +417,7 @@ class SQLiteBackend(Backend):
             created_at=datetime.fromisoformat(row["created_at"]) if isinstance(row["created_at"], str) else row["created_at"],
             started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] and isinstance(row["started_at"], str) else row["started_at"],
             completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] and isinstance(row["completed_at"], str) else row["completed_at"],
-            timeout_at=datetime.fromisoformat(row["timeout_at"]) if row["timeout_at"] and isinstance(row["timeout_at"], str) else row["timeout_at"],
+            expiry_at=datetime.fromisoformat(row["expiry_at"]) if row["expiry_at"] and isinstance(row["expiry_at"], str) else row["expiry_at"],
             progress=progress,
             tags=json.loads(row["tags"]),
             priority=row["priority"],

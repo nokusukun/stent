@@ -13,7 +13,7 @@ DFns is a lightweight, asynchronous, distributed task orchestration library for 
     - [Retries & Error Handling](#retries--error-handling)
     - [Idempotency & Caching](#idempotency--caching)
     - [Parallel Execution (Fan-out/Fan-in)](#parallel-execution-fan-outfan-in)
-    - [Timeouts](#timeouts)
+    - [expirys](#expirys)
 - [Architecture & Backends](#architecture--backends)
 - [Running Workers](#running-workers)
 - [Examples](#examples)
@@ -139,7 +139,7 @@ policy = RetryPolicy(
     max_attempts=5,
     backoff_factor=2.0, # Exponential backoff
     jitter=0.1,         # Add randomness to prevent thundering herd
-    retry_for=(ConnectionError, TimeoutError) # Only retry these exceptions
+    retry_for=(ConnectionError, ExpiryError) # Only retry these exceptions
 )
 
 @DFns.durable(retry_policy=policy)
@@ -185,12 +185,12 @@ async def batch_processor(items: list[int]):
     return sum(results)
 ```
 
-### Timeouts
+### expirys
 
-You can set a timeout for the entire execution. If it exceeds this duration, it is cancelled.
+You can set a expiry for the entire execution. If it exceeds this duration, it is cancelled.
 
 ```python
-exec_id = await executor.dispatch(long_workflow, timeout="1h 30m")
+exec_id = await executor.dispatch(long_workflow, expiry="1h 30m")
 ```
 
 ---
@@ -239,7 +239,7 @@ See the `examples/` folder for complete code:
 
 1.  **`simple_flow.py`**: Basic parent-child function calls.
 2.  **`failing_flow.py`**: Demonstrates automatic retries and Dead Letter Queue (DLQ) behavior.
-3.  **`complex_workflow.py`**: A data pipeline showcasing caching, retries, and timeouts.
+3.  **`complex_workflow.py`**: A data pipeline showcasing caching, retries, and expirys.
 *   `batch_processing.py`: Fan-out/fan-in pattern (processing multiple items in parallel).
 *   `saga_trip_booking.py`: Saga pattern with compensation (rollback) logic.
 *   `media_pipeline.py`: A complex 5-minute simulation of a media processing pipeline (Validation -> Safety -> Transcode/AI -> Package) with a live progress dashboard.

@@ -7,7 +7,7 @@ class NotificationBackend(Protocol):
         self,
         task_id: str,
         *,
-        timeout: float | None = None,
+        expiry: float | None = None,
     ) -> AsyncIterator[Dict[str, Any]]: ...
 
     async def notify_execution_updated(self, execution_id: str, state: str) -> None: ...
@@ -15,5 +15,5 @@ class NotificationBackend(Protocol):
         self,
         execution_id: str,
         *,
-        timeout: float | None = None,
+        expiry: float | None = None,
     ) -> AsyncIterator[Dict[str, Any]]: ...

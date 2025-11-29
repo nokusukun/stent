@@ -24,7 +24,7 @@ class RedisBackend(NotificationBackend):
         self,
         task_id: str,
         *,
-        timeout: float | None = None,
+        expiry: float | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         pubsub = self.redis.pubsub()
         channel = f"dfns:task:{task_id}"
@@ -39,12 +39,12 @@ class RedisBackend(NotificationBackend):
                         if data.get("state") in ("completed", "failed"):
                             break
 
-            if timeout:
+            if expiry:
                 try:
-                    async with asyncio.timeout(timeout):
+                    async with asyncio.expiry(expiry):
                         async for item in _listen():
                             yield item
-                except asyncio.TimeoutError:
+                except asyncio.ExpiryError:
                     pass
             else:
                  async for item in _listen():
@@ -63,7 +63,7 @@ class RedisBackend(NotificationBackend):
         self,
         execution_id: str,
         *,
-        timeout: float | None = None,
+        expiry: float | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         pubsub = self.redis.pubsub()
         channel = f"dfns:execution:{execution_id}"
@@ -78,12 +78,12 @@ class RedisBackend(NotificationBackend):
                         if data.get("state") in ("completed", "failed", "timed_out", "cancelled"):
                             break
 
-            if timeout:
+            if expiry:
                 try:
-                    async with asyncio.timeout(timeout):
+                    async with asyncio.expiry(expiry):
                         async for item in _listen():
                             yield item
-                except asyncio.TimeoutError:
+                except asyncio.ExpiryError:
                     pass
             else:
                  async for item in _listen():
