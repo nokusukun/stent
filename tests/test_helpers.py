@@ -2,25 +2,34 @@ import unittest
 import asyncio
 import os
 import logging
-from dfns import DFns, Result
+from dfns import DFns, Result, sleep
+from tests.utils import get_test_backend, cleanup_test_backend
 
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@DFns.durable()
+async def sleep_task():
+    await sleep("0.2s")
+    return "done"
 
 @DFns.durable()
 async def noop_task():
-    return "done"
+    pass
 
 class TestHelpers(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = f"test_helpers_{os.getpid()}.sqlite"
-        self.backend = DFns.backends.SQLiteBackend(self.db_path)
+        self.backend = get_test_backend(f"helpers_{os.getpid()}")
         await self.backend.init_db()
         self.executor = DFns(backend=self.backend)
-        # Don't start worker immediately to test pending state
+        self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
     async def asyncTearDown(self):
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        self.worker_task.cancel()
+        try:
+            await self.worker_task
+        except asyncio.CancelledError:
+            pass
+        await cleanup_test_backend(self.backend)
 
     async def test_queue_depth(self):
         self.assertEqual(await self.executor.queue_depth(), 0)

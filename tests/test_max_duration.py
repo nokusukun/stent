@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from datetime import timedelta
 from dfns import DFns, Result
-from dfns.backend.sqlite import SQLiteBackend
+from tests.utils import get_test_backend, cleanup_test_backend
 
 @DFns.durable()
 async def long_running_task(duration_sec: float) -> str:
@@ -11,8 +11,7 @@ async def long_running_task(duration_sec: float) -> str:
 
 class TestMaxDuration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = "test_max_duration.sqlite"
-        self.backend = DFns.backends.SQLiteBackend(self.db_path)
+        self.backend = get_test_backend(f"max_duration")
         await self.backend.init_db()
         self.executor = DFns(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
@@ -23,9 +22,7 @@ class TestMaxDuration(unittest.IsolatedAsyncioTestCase):
             await self.worker_task
         except asyncio.CancelledError:
             pass
-        import os
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        await cleanup_test_backend(self.backend)
 
     async def test_max_duration_success(self):
         # Task takes 0.1s, max_duration 1s -> should pass
@@ -48,7 +45,10 @@ class TestMaxDuration(unittest.IsolatedAsyncioTestCase):
         self.assertIn(state.state, ("timed_out", "failed"))
         if state.state == "failed":
              # If it failed due to timeout exception bubbling up
-             self.assertIn("timed out", str(state.result or state.error))
+             try:
+                 await self.executor.result_of(exec_id)
+             except Exception as e:
+                 self.assertIn("timed out", str(e))
 
     async def test_conflict_error(self):
         with self.assertRaises(ValueError):

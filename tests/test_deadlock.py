@@ -3,6 +3,7 @@ import asyncio
 import os
 import logging
 from dfns import DFns, Result
+from tests.utils import get_test_backend, cleanup_test_backend
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,14 +18,12 @@ async def deadlocking_orchestrator():
 
 class TestDeadlock(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = f"test_deadlock_{os.getpid()}.sqlite"
-        self.backend = DFns.backends.SQLiteBackend(self.db_path)
+        self.backend = get_test_backend(f"deadlock_{os.getpid()}")
         await self.backend.init_db()
         self.executor = DFns(backend=self.backend)
 
     async def asyncTearDown(self):
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        await cleanup_test_backend(self.backend)
 
     async def test_single_concurrency_deadlock(self):
         # We start a worker with concurrency=1

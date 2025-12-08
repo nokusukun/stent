@@ -1,21 +1,26 @@
-from dfns.executor import ExpiryError
 import unittest
 import asyncio
 import os
 import logging
+from datetime import timedelta
 from dfns import DFns, Result
+from dfns.executor import ExpiryError
+from tests.utils import get_test_backend, cleanup_test_backend
 
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @DFns.durable()
-async def quick_task() -> str:
-    await asyncio.sleep(0.5)
-    return "done"
+async def quick_task():
+    return "quick"
+
+@DFns.durable()
+async def slow_task(duration: float):
+    await asyncio.sleep(duration)
+    return "slow"
 
 class TestWaitFor(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = f"test_wait_for_{os.getpid()}.sqlite"
-        self.backend = DFns.backends.SQLiteBackend(self.db_path)
+        self.backend = get_test_backend(f"waitfor_{os.getpid()}")
         await self.backend.init_db()
         self.executor = DFns(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
@@ -26,19 +31,18 @@ class TestWaitFor(unittest.IsolatedAsyncioTestCase):
             await self.worker_task
         except asyncio.CancelledError:
             pass
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        await cleanup_test_backend(self.backend)
 
-    async def test_wait_for_success(self):
+    async def test_wait_success(self):
         exec_id = await self.executor.dispatch(quick_task)
         
         # Should block until done
         result = await self.executor.wait_for(exec_id, expiry=2.0)
         
         self.assertTrue(result.ok)
-        self.assertEqual(result.value, "done")
+        self.assertEqual(result.value, "quick")
 
-    async def test_wait_for_expiry(self):
+    async def test_wait_for_timeout(self):
         # We need a longer task than the wait expiry
         @DFns.durable()
         async def slow_task():

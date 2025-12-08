@@ -27,7 +27,7 @@ ehthumbs.db
 Thumbs.db
 
 # DFns specific
-*.sqlite
+*.sqlite*
 /tmp/*
 
 # Gemini temporary files

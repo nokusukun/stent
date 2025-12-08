@@ -13,7 +13,7 @@ DFns is a lightweight, asynchronous, distributed task orchestration library for 
     - [Retries & Error Handling](#retries--error-handling)
     - [Idempotency & Caching](#idempotency--caching)
     - [Parallel Execution (Fan-out/Fan-in)](#parallel-execution-fan-outfan-in)
-    - [expirys](#expirys)
+    - [Timeouts & Expirys](#timeouts--expirys)
 - [Architecture & Backends](#architecture--backends)
 - [Running Workers](#running-workers)
 - [Examples](#examples)
@@ -32,19 +32,15 @@ DFns is a lightweight, asynchronous, distributed task orchestration library for 
 
 ## Installation
 
-(Hypothetically, if published to PyPI)
 ```bash
 pip install dfns
 ```
 
-For this repository:
-```bash
-export PYTHONPATH=$PYTHONPATH:.
-```
-
 **Requirements:**
 *   Python 3.12+
-*   `aiosqlite` (optional, for SQLite backend async support, strictly required for production use with SQLite)
+*   `aiosqlite` (optional, for SQLite backend async support)
+*   `asyncpg` (optional, for PostgreSQL backend async support)
+*   `redis` (optional, for Redis notification support)
 
 ---
 
@@ -185,7 +181,7 @@ async def batch_processor(items: list[int]):
     return sum(results)
 ```
 
-### expirys
+### Timeouts & Expirys
 
 You can set a expiry for the entire execution. If it exceeds this duration, it is cancelled.
 
@@ -203,6 +199,10 @@ DFns is backend-agnostic.
 Included by default. Stores state in a local SQLite file.
 *   **Best for**: Development, testing, single-node deployments, embedded workflows.
 *   **Features**: Full persistence, async support.
+
+### Postgres Backend
+*   **Best for**: Production environments, concurrent access, high reliability.
+*   **Features**: Uses `asyncpg` for high performance.
 
 ### Mongo Backend (Planned)
 *   **Best for**: Distributed production clusters, high availability.

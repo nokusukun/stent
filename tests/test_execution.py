@@ -4,8 +4,8 @@ import os
 import shutil
 from datetime import datetime, timedelta
 from dfns import DFns, Result, RetryPolicy
-from dfns.backend.sqlite import SQLiteBackend
 from dfns.registry import registry
+from tests.utils import get_test_backend, cleanup_test_backend
 
 # Define some test functions globally so pickle/registry can find them
 @DFns.durable()
@@ -50,8 +50,7 @@ async def low_priority_report_task(report_id: str) -> str:
 
 class TestExecution(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = f"test_dfns_{os.getpid()}.sqlite"
-        self.backend = DFns.backends.SQLiteBackend(self.db_path)
+        self.backend = get_test_backend(f"{os.getpid()}_{id(self)}")
         await self.backend.init_db()
         self.executor = DFns(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
@@ -62,8 +61,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
             await self.worker_task
         except asyncio.CancelledError:
             pass
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        await cleanup_test_backend(self.backend)
             
     async def test_simple_execution(self):
         exec_id = await self.executor.dispatch(simple_task, 21)

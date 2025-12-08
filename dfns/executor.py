@@ -35,6 +35,11 @@ class Backends:
         # Placeholder
         raise NotImplementedError("Mongo backend not implemented yet")
 
+    @staticmethod
+    def PostgresBackend(dsn: str) -> Backend:
+        from dfns.backend.postgres import PostgresBackend
+        return PostgresBackend(dsn)
+
 class Notifications:
     @staticmethod
     def RedisBackend(url: str) -> NotificationBackend:
@@ -50,6 +55,8 @@ current_worker_semaphore: ContextVar[asyncio.Semaphore | None] = ContextVar("dfn
 
 class DFns:
     backends = Backends
+    notifications = Notifications
+    mute_async_sleep_notifications = False
 
     def __init__(
         self,
@@ -101,7 +108,7 @@ class DFns:
         
         @functools.wraps(original_sleep)
         async def warning_sleep(delay, result=None):
-            if current_execution_id.get():
+            if current_execution_id.get() and not self.mute_async_sleep_notifications:
                  logger.warning(f"Detected asyncio.sleep({delay}) inside a durable function. Use 'await dfns.sleep(...)' to release worker capacity.")
             return await original_sleep(delay, result)
         

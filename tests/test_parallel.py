@@ -1,36 +1,40 @@
 import unittest
 import asyncio
 import os
-import time
 import logging
-from dfns import DFns, Result, RetryPolicy
+import time
+from dfns import DFns, Result
+from tests.utils import get_test_backend, cleanup_test_backend
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @DFns.durable()
-async def parallel_sleeper(seconds: float) -> float:
-    await asyncio.sleep(seconds)
-    return seconds
+async def parallel_worker(duration: float) -> float:
+    await asyncio.sleep(duration)
+    return duration
 
 @DFns.durable()
-async def fan_out_fan_in_workflow(count: int, sleep_time: float) -> Result[float, Exception]:
+async def parallel_orchestrator(count: int, duration: float) -> list[float]:
     tasks = []
     for _ in range(count):
-        tasks.append(parallel_sleeper(sleep_time))
+        tasks.append(parallel_worker(duration))
     
-    # Run in parallel
     results = await asyncio.gather(*tasks)
-    
-    return Result.Ok(sum(results))
+    return results
+
+@DFns.durable()
+async def fan_out_fan_in_workflow(count: int, duration: float) -> float:
+    results = await parallel_orchestrator(count, duration)
+    return sum(results)
 
 class TestParallel(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = f"test_parallel_{os.getpid()}.sqlite"
-        self.backend = DFns.backends.SQLiteBackend(self.db_path)
+        self.backend = get_test_backend(f"parallel_{os.getpid()}")
         await self.backend.init_db()
         self.executor = DFns(backend=self.backend)
-        # Increase concurrency to allow parallel execution
-        self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1, max_concurrency=10))
+        # We need high concurrency
+        self.worker_task = asyncio.create_task(self.executor.serve(max_concurrency=10, poll_interval=0.1))
 
     async def asyncTearDown(self):
         self.worker_task.cancel()
@@ -38,10 +42,9 @@ class TestParallel(unittest.IsolatedAsyncioTestCase):
             await self.worker_task
         except asyncio.CancelledError:
             pass
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        await cleanup_test_backend(self.backend)
 
-    async def test_parallel_execution(self):
+    async def test_fan_out_fan_in(self):
         # We want to run 4 tasks, each sleeping 0.5s.
         # If sequential: 2.0s.
         # If parallel: ~0.5s + overhead.

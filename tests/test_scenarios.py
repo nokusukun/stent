@@ -4,6 +4,7 @@ import os
 import logging
 from dfns import DFns, Result, RetryPolicy
 from dfns.registry import registry
+from tests.utils import get_test_backend, cleanup_test_backend
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -63,8 +64,7 @@ async def slow_chain_workflow():
 
 class TestScenarios(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = f"test_scenarios_{os.getpid()}.sqlite"
-        self.backend = DFns.backends.SQLiteBackend(self.db_path)
+        self.backend = get_test_backend(f"scenarios_{os.getpid()}")
         await self.backend.init_db()
         self.executor = DFns(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
@@ -76,8 +76,7 @@ class TestScenarios(unittest.IsolatedAsyncioTestCase):
             await self.worker_task
         except asyncio.CancelledError:
             pass
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        await cleanup_test_backend(self.backend)
 
     async def test_llm_email_scenario(self):
         prompt = "Write a poem about Python"

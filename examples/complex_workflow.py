@@ -106,7 +106,11 @@ async def main():
     backend = DFns.backends.SQLiteBackend(db_path)
     await backend.init_db()
     
-    executor = DFns(backend=backend)
+    DFns.mute_async_sleep_notifications = True
+    executor = DFns(
+        backend=backend, 
+        notification_backend=DFns.notifications.RedisBackend("redis://localhost:6379")
+        )
     
     # Start a worker that listens to all queues for now
     print("Starting a general worker...")
