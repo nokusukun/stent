@@ -164,15 +164,24 @@ class PostgresBackend(Backend):
             return results
 
     async def create_task(self, task: TaskRecord) -> None:
+        await self.create_tasks([task])
+
+    async def create_tasks(self, tasks: List[TaskRecord]) -> None:
+        if not tasks:
+            return
         assert self.pool is not None
         async with self.pool.acquire() as conn:
-            await conn.execute(
+            await conn.executemany(
                 "INSERT INTO tasks (id, execution_id, step_name, kind, parent_task_id, state, args, kwargs, result, error, retries, created_at, started_at, completed_at, worker_id, lease_expires_at, tags, priority, queue, idempotency_key, retry_policy, scheduled_for) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)",
-                task.id, task.execution_id, task.step_name, task.kind, task.parent_task_id,
-                task.state, task.args, task.kwargs, task.result, task.error, task.retries,
-                task.created_at, task.started_at, task.completed_at, task.worker_id,
-                task.lease_expires_at, json.dumps(task.tags), task.priority, task.queue,
-                task.idempotency_key, self._policy_to_json(task.retry_policy), task.scheduled_for
+                [
+                    (
+                        task.id, task.execution_id, task.step_name, task.kind, task.parent_task_id,
+                        task.state, task.args, task.kwargs, task.result, task.error, task.retries,
+                        task.created_at, task.started_at, task.completed_at, task.worker_id,
+                        task.lease_expires_at, json.dumps(task.tags), task.priority, task.queue,
+                        task.idempotency_key, self._policy_to_json(task.retry_policy), task.scheduled_for
+                    ) for task in tasks
+                ]
             )
 
     async def count_tasks(self, queue: str | None = None, state: str | None = None) -> int:

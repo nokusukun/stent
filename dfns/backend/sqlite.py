@@ -177,16 +177,23 @@ class SQLiteBackend(Backend):
                 return results
 
     async def create_task(self, task: TaskRecord) -> None:
+        await self.create_tasks([task])
+
+    async def create_tasks(self, tasks: List[TaskRecord]) -> None:
+        if not tasks:
+            return
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
+            await db.executemany(
                 "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    task.id, task.execution_id, task.step_name, task.kind, task.parent_task_id,
-                    task.state, task.args, task.kwargs, task.result, task.error, task.retries,
-                    task.created_at, task.started_at, task.completed_at, task.worker_id,
-                    task.lease_expires_at, json.dumps(task.tags), task.priority, task.queue,
-                    task.idempotency_key, self._policy_to_json(task.retry_policy), task.scheduled_for
-                )
+                [
+                    (
+                        task.id, task.execution_id, task.step_name, task.kind, task.parent_task_id,
+                        task.state, task.args, task.kwargs, task.result, task.error, task.retries,
+                        task.created_at, task.started_at, task.completed_at, task.worker_id,
+                        task.lease_expires_at, json.dumps(task.tags), task.priority, task.queue,
+                        task.idempotency_key, self._policy_to_json(task.retry_policy), task.scheduled_for
+                    ) for task in tasks
+                ]
             )
             await db.commit()
 

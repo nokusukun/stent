@@ -212,6 +212,162 @@ class DFns:
          return await DFns._call_durable_stub(meta, args, kwargs)
 
     @classmethod
+    async def map(
+        cls, 
+        fn: Callable[..., Awaitable[Any]], 
+        iterable: Any
+    ) -> List[Any]:
+        """
+        Efficiently schedules and waits for a function to be applied to each item in the iterable.
+        Equivalent to `await asyncio.gather(*[fn(item) for item in iterable])` but with batch scheduling optimization.
+        """
+        executor = current_executor.get()
+        if not executor:
+            # Local fallback
+            return await asyncio.gather(*[fn(item) for item in iterable])
+
+        name = registry.name_for_function(fn)
+        meta = registry.get(name)
+        if not meta:
+             # Assume wrapper handles dynamic registration if needed, but for batch map we need strict mode or handle it.
+             # If fn is already the @durable decorated stub, getting its name via registry helper should work.
+             # If it's a raw function, we need to register it on the fly?
+             # For simplicity, require @durable.
+             # If we call fn(item) it calls _call_durable_stub. 
+             # We want to BYPASS _call_durable_stub's immediate scheduling.
+             # But accessing 'fn' which is the wrapper is tricky to unwrap to get meta reliably if not in registry.
+             # registry.name_for_function handles unwrapping if it's our stub.
+             pass
+        
+        if not meta:
+            # Fallback to standard gather if we can't find meta (e.g. dynamic wrapper issues)
+            return await asyncio.gather(*[fn(item) for item in iterable])
+
+        # Prepare tasks
+        tasks_to_create: List[TaskRecord] = []
+        # We also need to track cache/idempotency hits to avoid scheduling them
+        results_or_tasks: List[Any | TaskRecord] = [] 
+        
+        exec_id = current_execution_id.get() or ""
+        parent_id = current_task_id.get() or ""
+
+        # Pre-calculate common fields
+        args_list = []
+        for item in iterable:
+             # Support multiple args if iterable yields tuples? 
+             # Standard map(func, iterable) takes one arg per item from iterable.
+             # If user wants multi-args, they use starmap or pass tuple.
+             # We'll assume single arg per item for simplicity matching python map.
+             args = (item,)
+             kwargs = {}
+             args_list.append((args, kwargs))
+
+        # Check cache/idempotency
+        # TODO: Batch read cache/idempotency would be better. For now loop.
+        
+        for i, (args, kwargs) in enumerate(args_list):
+            key = None
+            hit = False
+            
+            if meta.idempotent or meta.cached:
+                if meta.idempotency_key_func:
+                    key = meta.idempotency_key_func(*args, **kwargs)
+                else:
+                    key = default_idempotency_key(meta.name, meta.version, args, kwargs, serializer=executor.serializer)
+
+                if key:
+                     if meta.cached:
+                         cached_val = await executor.backend.get_cached_result(key)
+                         if cached_val is not None:
+                             if exec_id:
+                                 await executor.backend.append_progress(exec_id, ExecutionProgress(
+                                     step=meta.name, status="cache_hit"
+                                 ))
+                             results_or_tasks.append(executor.serializer.loads(cached_val))
+                             hit = True
+                     
+                     if not hit and meta.idempotent:
+                         stored_val = await executor.backend.get_idempotency_result(key)
+                         if stored_val is not None:
+                             if exec_id:
+                                 await executor.backend.append_progress(exec_id, ExecutionProgress(
+                                     step=meta.name, status="cache_hit"
+                                 ))
+                             results_or_tasks.append(executor.serializer.loads(stored_val))
+                             hit = True
+
+            if not hit:
+                # Create TaskRecord
+                task_id = str(uuid.uuid4())
+                task = TaskRecord(
+                    id=task_id,
+                    execution_id=exec_id,
+                    step_name=meta.name,
+                    kind="activity",
+                    parent_task_id=parent_id,
+                    state="pending",
+                    args=executor.serializer.dumps(args),
+                    kwargs=executor.serializer.dumps(kwargs),
+                    retries=0,
+                    created_at=datetime.now(),
+                    tags=meta.tags,
+                    priority=meta.priority,
+                    queue=meta.queue,
+                    retry_policy=meta.retry_policy,
+                    idempotency_key=key,
+                    scheduled_for=None
+                )
+                tasks_to_create.append(task)
+                results_or_tasks.append(task)
+
+        # Batch create tasks
+        if tasks_to_create:
+            await executor.backend.create_tasks(tasks_to_create)
+            if exec_id:
+                # Batch log progress? We only have append_progress (single). 
+                # Doing N updates is okay-ish or we can add batch progress later.
+                # For now, just do it.
+                for t in tasks_to_create:
+                    await executor.backend.append_progress(exec_id, ExecutionProgress(
+                        step=meta.name, status="dispatched"
+                    ))
+        
+        # Wait for all
+        async def waiter(item):
+            if isinstance(item, TaskRecord):
+                completed = await executor._wait_for_task(item.id)
+                if completed.state == "failed":
+                    if completed.error:
+                        err = executor.serializer.loads(completed.error)
+                        if isinstance(err, BaseException):
+                             raise err
+                        raise Exception(str(err))
+                    raise Exception("Task failed")
+                
+                res = executor.serializer.loads(completed.result)
+                # Store cache/idempotency
+                if item.idempotency_key:
+                    if meta.cached:
+                        await executor.backend.set_cached_result(item.idempotency_key, completed.result)
+                    if meta.idempotent:
+                        await executor.backend.set_idempotency_result(item.idempotency_key, completed.result)
+                return res
+            else:
+                return item
+
+        return await asyncio.gather(*[waiter(item) for item in results_or_tasks])
+
+    @classmethod
+    async def gather(cls, *tasks):
+        """
+        Alias for asyncio.gather. 
+        Note: If you pass function calls (e.g. `dfns.gather(func(1), func(2))`), 
+        they are scheduled immediately when called, not batched by gather.
+        Use `dfns.map` for batch scheduling optimization if applicable.
+        """
+        return await asyncio.gather(*tasks)
+
+    @classmethod
     async def _call_durable_stub(cls, meta: FunctionMetadata, args: tuple, kwargs: dict):
         executor = current_executor.get() # Get the current executor if any
         exec_id = current_execution_id.get()

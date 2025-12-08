@@ -17,7 +17,7 @@ This document tracks planned improvements, feature requests, and architectural c
 ## 2. Core Workflow Features
 
 ### Orchestration Patterns
-- [ ] **Fan-out / Fan-in:** Implement a first-class `dfns.gather()` or `dfns.map()` to parallelize tasks efficiently and wait for all results.
+- [x] **Fan-out / Fan-in:** Implement a first-class `dfns.gather()` or `dfns.map()` to parallelize tasks efficiently and wait for all results.
 - [ ] **Child Workflows:** specialized API to start a workflow from within another and wait for its completion as a single atomic step (handling cancellation propagation).
 - [ ] **External Signals/Events:** API to pause a workflow until an external event (e.g., webhook, human approval) is received (`await dfns.wait_for_signal("approval")`).
 - [ ] **Cron / Scheduled Triggers:** Native support for recurring workflows (e.g., `@DFns.durable(schedule="@daily")`).
