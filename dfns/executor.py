@@ -145,7 +145,25 @@ class DFns:
         """
         return await self.dispatch(fn, *args, delay=delay, **kwargs)
 
-    async def sleep(self, duration: str | dict | timedelta):
+    @staticmethod
+    async def sleep(duration: str | dict | timedelta):
+        """
+        Static helper to sleep for a specific duration.
+        Proxies to the global sleep function which uses the current executor context.
+        """
+        # Local import or direct call to global sleep if available in scope
+        # Since 'sleep' is defined at the end of this file, we can't call it directly if it's not defined yet.
+        # But methods are bound at runtime.
+        # However, 'sleep' is defined AFTER 'DFns' class.
+        # We can use 'current_executor' directly here.
+        executor = current_executor.get()
+        if executor:
+            await executor.sleep_instance(duration)
+        else:
+            d = parse_duration(duration)
+            await _original_sleep(d.total_seconds())
+
+    async def sleep_instance(self, duration: str | dict | timedelta):
         """
         Sleep for a specific duration. 
         This releases the worker to process other tasks while waiting.
@@ -386,14 +404,16 @@ class DFns:
                 await permit.acquire()
 
     @classmethod
-    async def gather(cls, *tasks):
+    async def gather(cls, *tasks, **kwargs):
         """
         Alias for asyncio.gather. 
         Note: If you pass function calls (e.g. `dfns.gather(func(1), func(2))`), 
         they are scheduled immediately when called, not batched by gather.
         Use `dfns.map` for batch scheduling optimization if applicable.
+        
+        Supports `return_exceptions=True`.
         """
-        return await asyncio.gather(*tasks)
+        return await asyncio.gather(*tasks, **kwargs)
 
     @classmethod
     async def _call_durable_stub(cls, meta: FunctionMetadata, args: tuple, kwargs: dict):
