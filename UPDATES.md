@@ -63,6 +63,28 @@ To disable cleanup (e.g., for archival or debugging purposes), set `cleanup_inte
 await executor.serve(cleanup_interval=None)
 ```
 
+---
+
+## 3. Rate Limiting (Concurrency Control)
+
+### The Problem
+Some tasks require limiting global concurrency (e.g., GPU tasks, API calls to rate-limited services). Previously, only worker-local concurrency was limited via `max_concurrency` (semaphore).
+
+### The Solution: Global Concurrency Limits
+We added support for **global/cluster-wide concurrency limits** for specific durable functions.
+
+### Configuration
+Use the `max_concurrent` parameter in the `@durable` decorator.
+
+```python
+# Limit to 1 concurrent instance globally
+@DFns.durable(max_concurrent=1)
+async def exclusive_task(x: int):
+    pass
+```
+
+The system automatically enforces this limit across all workers connected to the same backend.
+
 ## Summary of `serve()` Parameters
 
 | Parameter | Type | Default | Description |

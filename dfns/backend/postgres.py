@@ -243,6 +243,7 @@ class PostgresBackend(Backend):
         tags: List[str] | None = None,
         now: datetime | None = None,
         lease_duration: timedelta | None = None,
+        concurrency_limits: dict[str, int] | None = None,
     ) -> TaskRecord | None:
         if now is None:
             now = datetime.now()
@@ -253,8 +254,8 @@ class PostgresBackend(Backend):
         
         # Helper for queues condition
         queue_clause = ""
-        # $1=worker_id, $2=expires_at, $3=now, $4=now, $5=now
-        params: List[Any] = [worker_id, expires_at, now, now, now]
+        # $1=now, $2=now
+        params: List[Any] = [now, now]
         
         if queues:
             placeholders: List[str] = []
@@ -268,27 +269,53 @@ class PostgresBackend(Backend):
 
         assert self.pool is not None
         async with self.pool.acquire() as conn:
-            # Using sub-select for claim with RETURNING
-            query = f"""
-                UPDATE tasks
-                SET state='running', worker_id=$1, lease_expires_at=$2, started_at=$3
-                WHERE id = (
-                    SELECT id FROM tasks
+            async with conn.transaction():
+                # 1. Fetch candidates
+                query = f"""
+                    SELECT * FROM tasks
                     WHERE (
                         state='pending'
-                        OR (state='running' AND lease_expires_at < $4)
+                        OR (state='running' AND lease_expires_at < $1)
                     )
-                    AND (scheduled_for IS NULL OR scheduled_for <= $5)
-                      {queue_clause}
+                    AND (scheduled_for IS NULL OR scheduled_for <= $2)
+                    {queue_clause}
                     ORDER BY priority DESC, created_at ASC
-                    LIMIT 1
+                    LIMIT 50
                     FOR UPDATE SKIP LOCKED
-                )
-                RETURNING *
-            """
-            row = await conn.fetchrow(query, *params)
-            if row:
-                return self._row_to_task(row)
+                """
+                rows = await conn.fetch(query, *params)
+                
+                if not rows:
+                    return None
+                
+                for row in rows:
+                    step_name = row["step_name"]
+                    limit = concurrency_limits.get(step_name) if concurrency_limits else None
+                    
+                    if limit is not None:
+                         # Check count of currently running tasks for this step
+                         # We exclude lease-expired ones from "active" count implicitly by checking lease_expires_at > now
+                         count_val = await conn.fetchval("""
+                            SELECT COUNT(*) FROM tasks 
+                            WHERE step_name = $1 
+                            AND state = 'running' 
+                            AND lease_expires_at > $2
+                         """, step_name, now)
+                         
+                         if (count_val or 0) >= limit:
+                             continue
+
+                    # Claim it
+                    # We already locked it, so update is safe
+                    updated_row = await conn.fetchrow("""
+                        UPDATE tasks
+                        SET state='running', worker_id=$1, lease_expires_at=$2, started_at=$3
+                        WHERE id=$4
+                        RETURNING *
+                    """, worker_id, expires_at, now, row["id"])
+                    
+                    if updated_row:
+                        return self._row_to_task(updated_row)
         return None
 
     async def list_tasks_for_execution(self, execution_id: str) -> List[TaskRecord]:

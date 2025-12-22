@@ -258,6 +258,7 @@ class SQLiteBackend(Backend):
         tags: List[str] | None = None,
         now: datetime | None = None,
         lease_duration: timedelta | None = None,
+        concurrency_limits: dict[str, int] | None = None,
     ) -> TaskRecord | None:
         if now is None:
             now = datetime.now()
@@ -268,7 +269,7 @@ class SQLiteBackend(Backend):
         
         # Helper for queues condition
         queue_clause = ""
-        params: List[Any] = [worker_id, expires_at, now, now, now]
+        params: List[Any] = [now, now]
         if queues:
             placeholders = ",".join(["?"] * len(queues))
             queue_clause = f"AND (queue IN ({placeholders}) OR queue IS NULL)"
@@ -276,34 +277,76 @@ class SQLiteBackend(Backend):
         else:
             queue_clause = "AND 1=1"
 
-        # We need a transaction
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            # Using sub-select for claim
-            # Claim if pending OR (running AND lease expired)
-            # AND scheduled_for is effectively passed
+            
+            # 1. Fetch candidates (fetch more than 1 to handle filtered ones)
+            # We want pending tasks or running tasks with expired lease
             query = f"""
-                UPDATE tasks
-                SET state='running', worker_id=?, lease_expires_at=?, started_at=?
-                WHERE id = (
-                    SELECT id FROM tasks
-                    WHERE (
+                SELECT * FROM tasks
+                WHERE (
+                    state='pending'
+                    OR (state='running' AND lease_expires_at < ?)
+                )
+                AND (scheduled_for IS NULL OR scheduled_for <= ?)
+                {queue_clause}
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 50
+            """
+            
+            async with db.execute(query, tuple(params)) as cursor:
+                candidates = await cursor.fetchall()
+            
+            if not candidates:
+                return None
+
+            # 2. Iterate and check limits
+            for row in candidates:
+                step_name = row["step_name"]
+                limit = concurrency_limits.get(step_name) if concurrency_limits else None
+                
+                if limit is not None:
+                    # Check current running count for this function
+                    # We consider 'running' tasks that have NOT expired their lease
+                    count_query = """
+                        SELECT COUNT(*) FROM tasks 
+                        WHERE step_name = ? 
+                        AND state = 'running' 
+                        AND lease_expires_at > ?
+                    """
+                    async with db.execute(count_query, (step_name, now)) as count_cursor:
+                        count_row = await count_cursor.fetchone()
+                        current_count = count_row[0] if count_row else 0
+                    
+                    if current_count >= limit:
+                        continue # Skip this task, limit reached
+
+                # 3. Attempt to claim
+                # Optimistic locking: ensure it's still in the state we found it
+                # (pending OR running-expired) AND id matches
+                claim_query = """
+                    UPDATE tasks
+                    SET state='running', worker_id=?, lease_expires_at=?, started_at=?
+                    WHERE id = ?
+                    AND (
                         state='pending'
                         OR (state='running' AND lease_expires_at < ?)
                     )
-                    AND (scheduled_for IS NULL OR scheduled_for <= ?)
-                      {queue_clause}
-                    ORDER BY priority DESC, created_at ASC
-                    LIMIT 1
-                )
-                RETURNING *
-            """
-            async with db.execute(query, tuple(params)) as cursor:
-                row = await cursor.fetchone()
-                await db.commit()
-                if row:
-                    return self._row_to_task(row)
-        return None
+                    RETURNING *
+                """
+                # For lease check in UPDATE, we need to pass 'now' again
+                # row["lease_expires_at"] logic is complex because we are allowing re-claim of expired.
+                # The condition in UPDATE must match the condition in SELECT regarding lease expiration.
+                
+                claim_params = (worker_id, expires_at, now, row["id"], now)
+                
+                async with db.execute(claim_query, claim_params) as claim_cursor:
+                    claimed_row = await claim_cursor.fetchone()
+                    if claimed_row:
+                        await db.commit()
+                        return self._row_to_task(claimed_row)
+            
+            return None
 
     async def list_tasks_for_execution(self, execution_id: str) -> List[TaskRecord]:
         async with aiosqlite.connect(self.db_path) as db:

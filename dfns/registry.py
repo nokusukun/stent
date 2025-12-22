@@ -14,6 +14,7 @@ class FunctionMetadata:
     version: str | None
     idempotent: bool
     idempotency_key_func: Callable[..., str] | None
+    max_concurrent: int | None = None
 
 class FunctionRegistry:
     def __init__(self):

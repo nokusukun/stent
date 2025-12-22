@@ -189,6 +189,7 @@ class DFns:
         idempotent: bool = False,
         idempotency_key_func: Callable[..., str] | None = None,
         version: str | None = None,
+        max_concurrent: int | None = None,
     ):
         def decorator(fn):
             name = registry.name_for_function(fn)
@@ -203,6 +204,7 @@ class DFns:
                 idempotent=idempotent,
                 idempotency_key_func=idempotency_key_func,
                 version=version,
+                max_concurrent=max_concurrent,
             )
             registry.register(meta)
 
@@ -375,6 +377,7 @@ class DFns:
             permit.release()
 
         try:
+
             async def waiter(item):
                 if isinstance(item, TaskRecord):
                     # Use internal wait that DOES NOT touch semaphore
@@ -790,13 +793,20 @@ class DFns:
                 # We acquire first, then claim.
                 await sem.acquire()
 
+                # Collect concurrency limits
+                concurrency_limits = {}
+                for name, meta in registry._registry.items():
+                    if meta.max_concurrent is not None:
+                        concurrency_limits[name] = meta.max_concurrent
+
                 try:
                     task = await self.backend.claim_next_task(
                         worker_id=worker_id,
                         queues=queues,
                         tags=tags,
                         now=datetime.now(),
-                        lease_duration=lease_duration
+                        lease_duration=lease_duration,
+                        concurrency_limits=concurrency_limits
                     )
                     
                     if task:

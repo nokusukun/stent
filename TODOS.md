@@ -21,7 +21,7 @@ This document tracks planned improvements, feature requests, and architectural c
 - [ ] **Child Workflows:** specialized API to start a workflow from within another and wait for its completion as a single atomic step (handling cancellation propagation).
 - [ ] **External Signals/Events:** API to pause a workflow until an external event (e.g., webhook, human approval) is received (`await dfns.wait_for_signal("approval")`).
 - [ ] **Cron / Scheduled Triggers:** Native support for recurring workflows (e.g., `@DFns.durable(schedule="@daily")`).
-- [ ] **Rate Limiting:** Global/Cluster-wide rate limiting for specific tasks or queues (e.g., "max 10/s for `send_email`").
+- [x] **Rate Limiting:** Global/Cluster-wide rate limiting for specific tasks or queues (e.g., "max 10/s for `send_email`") or `max_concurrent=2` for `use_gpu` that only allows n durable functions to run at a time.
 
 ### Advanced Logic
 - [ ] **Continue-As-New:** Mechanism to restart a workflow with new arguments, clearing history to prevent unbounded growth for infinite loops.
