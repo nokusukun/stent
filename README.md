@@ -126,6 +126,18 @@ When a durable function calls another durable function (e.g., `await other_func(
 *   The parent function "sleeps" (suspends) until the child task is completed by a worker.
 *   This allows workflows to run over days or weeks without consuming memory while waiting.
 
+### Durable Sleep
+
+Standard `time.sleep` or `asyncio.sleep` blocks the worker process, preventing it from handling other tasks. Senpuki provides a durable sleep that suspends the function and schedules a wake-up task.
+
+```python
+# Instead of asyncio.sleep(60)
+await Senpuki.sleep(60) # Sleeps for 60 seconds
+await Senpuki.sleep("1h 30m") # Supports duration strings
+```
+
+During this sleep, the worker is free to process other tasks.
+
 ### Retries & Error Handling
 
 Failures happen. Senpuki allows declarative retry policies.
@@ -134,16 +146,16 @@ Failures happen. Senpuki allows declarative retry policies.
 policy = RetryPolicy(
     max_attempts=5,
     backoff_factor=2.0, # Exponential backoff
+    initial_delay=1.0,  # First retry after 1s
+    max_delay=60.0,     # Cap delay at 60s
     jitter=0.1,         # Add randomness to prevent thundering herd
-    retry_for=(ConnectionError, ExpiryError) # Only retry these exceptions
+    retry_for=(ConnectionError, TimeoutError) # Only retry these exceptions
 )
 
 @Senpuki.durable(retry_policy=policy)
 async def unstable_api_call():
     ...
 ```
-
-If the function fails after all retries, the Execution is marked as `failed`, and the error is propagated to the parent orchestrator (if any), which can catch it using standard `try/except`.
 
 ### Idempotency & Caching
 
@@ -164,21 +176,43 @@ async def heavy_compute(data_hash: str):
     ...
 ```
 
-### Parallel Execution (Fan-out/Fan-in)
+### Parallel Execution & Batching
 
-Use standard `asyncio.gather` to run tasks in parallel. Senpuki schedules them all, and the worker pool executes them concurrently.
+You can run tasks in parallel using standard `asyncio.gather`. Senpuki also provides `Senpuki.map` for optimized batch scheduling.
+
+**Using `asyncio.gather` (Fan-out)**
+```python
+@Senpuki.durable()
+async def process_items(items: list[int]):
+    tasks = []
+    for item in items:
+        tasks.append(process_single(item))
+    
+    # Run all in parallel
+    results = await asyncio.gather(*tasks)
+    return results
+```
+
+**Using `Senpuki.map` (Optimized)**
+Use `map` when you have a large list of items. It batches the database operations for scheduling.
 
 ```python
 @Senpuki.durable()
-async def batch_processor(items: list[int]):
-    tasks = []
-    for item in items:
-        # Schedule all tasks
-        tasks.append(process_item(item))
-    
-    # Wait for all to complete
-    results = await asyncio.gather(*tasks)
-    return sum(results)
+async def batch_process(items: list[int]):
+    # Efficiently schedules process_single for each item
+    results = await Senpuki.map(process_single, items)
+    return results
+```
+
+### Rate Limiting (Concurrency Control)
+
+You can limit the number of concurrent executions for a specific function across the entire cluster. This is useful for protecting external resources or managing heavy workloads.
+
+```python
+# Only allow 5 concurrent calls to this function across all workers
+@Senpuki.durable(max_concurrent=5)
+async def external_api_call(data: dict):
+    ...
 ```
 
 ### Timeouts & Expirys
@@ -212,24 +246,104 @@ Optional. Uses Redis Pub/Sub to notify orchestrators immediately when a task fin
 
 ---
 
-## Running Workers
+## Worker Configuration & Deployment
 
-The `executor.serve()` method runs the worker loop. In production, you typically run this in a separate process or container.
+The `executor.serve()` method runs the worker loop. You can configure it to handle specific workloads and perform automatic cleanup.
 
 ```python
-# worker.py
+from datetime import timedelta
+
 async def run_worker():
     backend = Senpuki.backends.SQLiteBackend("prod.db")
     executor = Senpuki(backend=backend)
     
-    # Consume only specific queues
     await executor.serve(
-        queues=["default", "high_priority"],
-        max_concurrency=50
+        worker_id="worker-1",      # Unique ID for this worker instance
+        queues=["default", "high"],# Only process tasks in these queues
+        tags=["billing", "email"], # Only process tasks with these tags
+        max_concurrency=50,        # Max concurrent tasks per worker
+        poll_interval=1.0,         # DB polling interval when idle
+        lease_duration=timedelta(minutes=5), # Task lock duration
+        cleanup_interval=3600.0,   # Run cleanup every hour
+        retention_period=timedelta(days=7)   # Delete executions older than 7 days
     )
 ```
 
-You can scale horizontally by running multiple worker instances pointing to the same database.
+**Scaling:**
+Run multiple worker processes (or containers) pointing to the same database backend. They will automatically coordinate and distribute tasks.
+
+---
+
+## Monitoring & Management
+
+Senpuki provides APIs to inspect and manage executions.
+
+```python
+# Check status
+state = await executor.state_of(exec_id)
+print(f"State: {state.state}, Progress: {state.progress_str}")
+
+# Wait for completion (blocking)
+result = await executor.wait_for(exec_id, expiry=30.0)
+
+# List recent executions
+executions = await executor.list_executions(limit=20, state="failed")
+
+# Check queue depth
+pending_count = await executor.queue_depth(queue="default")
+
+# Inspect running activities
+running_tasks = await executor.get_running_activities()
+```
+
+---
+
+## Advanced Configuration
+
+### Result Type
+Senpuki uses a Rust-like `Result` type (`Ok` / `Error`) for robust error handling, although standard exceptions are also supported.
+
+```python
+from senpuki import Result
+
+@Senpuki.durable()
+async def safe_divide(a: int, b: int) -> Result[float, str]:
+    if b == 0:
+        return Result.Error("Division by zero")
+    return Result.Ok(a / b)
+
+# Usage
+res = await safe_divide(10, 0)
+if res.ok:
+    print(res.value)
+else:
+    print(f"Error: {res.error}")
+```
+
+### Notification Backend (Redis)
+By default, workers poll the database. For lower latency, use Redis for real-time notifications.
+
+```python
+executor = Senpuki(
+    backend=Senpuki.backends.PostgresBackend(dsn),
+    notification_backend=Senpuki.notifications.RedisBackend("redis://localhost:6379")
+)
+```
+
+### Serialization
+Senpuki defaults to `json` serialization. You can switch to `pickle` for complex Python objects (e.g., custom classes), or implement a custom serializer.
+
+```python
+# Use Pickle
+executor = Senpuki(backend=backend, serializer="pickle")
+
+# Custom
+class MySerializer:
+    def dumps(self, obj) -> bytes: ...
+    def loads(self, data: bytes) -> Any: ...
+
+executor = Senpuki(backend=backend, serializer=MySerializer())
+```
 
 ---
 

@@ -68,7 +68,7 @@ async def site_crawler(urls: list[str]) -> dict:
     results: list[Any | BaseException] = await Senpuki.gather(*tasks, return_exceptions=True)
     
     # Aggregation Logic
-    report = {
+    report: dict[str, Any] = {
         "total_urls": len(urls),
         "successful": 0,
         "failed": 0,

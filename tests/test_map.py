@@ -68,8 +68,9 @@ class TestMap(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Three is forbidden", str(final.error))
 
     async def test_gather_alias(self):
+         from typing import Any
          @Senpuki.durable()
-         async def workflow() -> list[int]:
+         async def workflow() -> list[Any]:
              t1 = square(10)
              t2 = square(20)
              return await Senpuki.gather(t1, t2)
