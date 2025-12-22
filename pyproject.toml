@@ -1,6 +1,6 @@
 [project]
 name = "senpuki"
-version = "0.1.0"
+version = "0.1.1"
 description = "Distributed Durable Functions in Python"
 authors = [
   { name="noku", email="noku@onlypa.ws" },
