@@ -2,19 +2,19 @@ import unittest
 import asyncio
 import os
 from datetime import datetime, timedelta
-import dfns # import the package to access dfns.sleep
-from dfns.executor import DFns, Backends
-from dfns.registry import registry
-from dfns.utils.time import parse_duration
+import senpuki # import the package to access senpuki.sleep
+from senpuki.executor import Senpuki, Backends
+from senpuki.registry import registry
+from senpuki.utils.time import parse_duration
 
 # Define some tasks
-@DFns.durable()
+@Senpuki.durable()
 async def quick_task(x: int):
     return x * 2
 
-@DFns.durable()
+@Senpuki.durable()
 async def sleeping_workflow():
-    await dfns.sleep("1s")
+    await senpuki.sleep("1s")
     return "done"
 
 class TestScheduling(unittest.IsolatedAsyncioTestCase):
@@ -22,7 +22,7 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
         self.db_path = f"test_scheduling_{os.getpid()}.sqlite"
         self.backend = Backends.SQLiteBackend(self.db_path)
         await self.backend.init_db()
-        self.dfns = DFns(backend=self.backend)
+        self.senpuki = Senpuki(backend=self.backend)
 
     async def asyncTearDown(self):
         if os.path.exists(self.db_path):
@@ -35,14 +35,14 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
 
     async def test_schedule_delayed_execution(self):
         # Schedule to run in 2 seconds
-        exec_id = await self.dfns.schedule("2s", quick_task, 10)
+        exec_id = await self.senpuki.schedule("2s", quick_task, 10)
         
         # Immediately check state
-        state = await self.dfns.state_of(exec_id)
+        state = await self.senpuki.state_of(exec_id)
         self.assertEqual(state.state, "pending")
         
         # Start a worker in background
-        worker_task = asyncio.create_task(self.dfns.serve(poll_interval=0.1))
+        worker_task = asyncio.create_task(self.senpuki.serve(poll_interval=0.1))
         
         try:
             # Wait 1 second - should still be pending (not picked up)
@@ -61,7 +61,7 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(1.5)
             
             # Should be done now
-            result = await self.dfns.result_of(exec_id)
+            result = await self.senpuki.result_of(exec_id)
             self.assertEqual(result.or_raise(), 20)
             
         finally:
@@ -71,17 +71,17 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
             except asyncio.CancelledError:
                 pass
 
-    async def test_dfns_sleep(self):
+    async def test_senpuki_sleep(self):
         # We need to register sleeping_workflow manually if it's not picked up? 
         # Decorator handles it.
         
         start = datetime.now()
-        exec_id = await self.dfns.dispatch(sleeping_workflow)
+        exec_id = await self.senpuki.dispatch(sleeping_workflow)
         
-        worker_task = asyncio.create_task(self.dfns.serve(poll_interval=0.1))
+        worker_task = asyncio.create_task(self.senpuki.serve(poll_interval=0.1))
         
         try:
-            result = await self.dfns.wait_for(exec_id, expiry=5.0)
+            result = await self.senpuki.wait_for(exec_id, expiry=5.0)
             duration = (datetime.now() - start).total_seconds()
             
             self.assertEqual(result.or_raise(), "done")

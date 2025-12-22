@@ -1,7 +1,11 @@
 [project]
-name = "dfns"
+name = "senpuki"
 version = "0.1.0"
 description = "Distributed Durable Functions in Python"
+authors = [
+  { name="noku", email="noku@onlypa.ws" },
+]
+
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,8 +15,16 @@ dependencies = [
     "redis>=7.1.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/nokusukun/dfns"
+Issues = "https://github.com/nokusukun/dfns/issues"
+
 [dependency-groups]
 dev = [
     "pyrefly>=0.43.1",
     "pytest>=9.0.1",
 ]
+
+[tool.setuptools.packages.find]
+exclude = ["features"]
+

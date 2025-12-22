@@ -3,17 +3,17 @@ import asyncio
 import os
 import logging
 from datetime import timedelta
-from dfns import DFns, Result
-from dfns.executor import ExpiryError
+from senpuki import Senpuki, Result
+from senpuki.executor import ExpiryError
 from tests.utils import get_test_backend, cleanup_test_backend
 
 logger = logging.getLogger(__name__)
 
-@DFns.durable()
+@Senpuki.durable()
 async def quick_task():
     return "quick"
 
-@DFns.durable()
+@Senpuki.durable()
 async def slow_task(duration: float):
     await asyncio.sleep(duration)
     return "slow"
@@ -22,7 +22,7 @@ class TestWaitFor(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = get_test_backend(f"waitfor_{os.getpid()}")
         await self.backend.init_db()
-        self.executor = DFns(backend=self.backend)
+        self.executor = Senpuki(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
     async def asyncTearDown(self):
@@ -44,7 +44,7 @@ class TestWaitFor(unittest.IsolatedAsyncioTestCase):
 
     async def test_wait_for_timeout(self):
         # We need a longer task than the wait expiry
-        @DFns.durable()
+        @Senpuki.durable()
         async def slow_task():
             await asyncio.sleep(1.0)
             return "slow"

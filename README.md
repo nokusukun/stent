@@ -1,6 +1,6 @@
-# DFns: Distributed Durable Functions for Python
+# Senpuki: Distributed Durable Functions for Python
 
-DFns is a lightweight, asynchronous, distributed task orchestration library for Python. It allows you to write stateful, reliable workflows ("durable functions") using standard Python async/await syntax. DFns handles the complexity of persisting state, retrying failures, and distributing work across a pool of workers.
+Senpuki is a lightweight, asynchronous, distributed task orchestration library for Python. It allows you to write stateful, reliable workflows ("durable functions") using standard Python async/await syntax. Senpuki handles the complexity of persisting state, retrying failures, and distributing work across a pool of workers.
 
 ## Table of Contents
 
@@ -22,7 +22,7 @@ DFns is a lightweight, asynchronous, distributed task orchestration library for 
 
 ## Core Concepts
 
-*   **Durable Functions**: Python async functions decorated with `@DFns.durable()`. They can be orchestrators (calling other functions) or activities (doing work).
+*   **Durable Functions**: Python async functions decorated with `@Senpuki.durable()`. They can be orchestrators (calling other functions) or activities (doing work).
 *   **Orchestrator**: A durable function that schedules other durable functions. It sleeps while waiting for sub-tasks to complete, freeing up worker resources.
 *   **Activity**: A leaf-node durable function that performs a specific action (e.g., API call, DB operation).
 *   **Execution**: A single run of a workflow. It has a unique ID and persistent state.
@@ -33,7 +33,7 @@ DFns is a lightweight, asynchronous, distributed task orchestration library for 
 ## Installation
 
 ```bash
-pip install dfns
+pip install senpuki
 ```
 
 **Requirements:**
@@ -50,16 +50,16 @@ pip install dfns
 
     ```python
     import asyncio
-    from dfns import DFns, Result
+    from senpuki import Senpuki, Result
 
     # 1. Define an activity
-    @DFns.durable()
+    @Senpuki.durable()
     async def greet(name: str) -> str:
         await asyncio.sleep(0.1) # Simulate work
         return f"Hello, {name}!"
 
     # 2. Define an orchestrator
-    @DFns.durable()
+    @Senpuki.durable()
     async def workflow(names: list[str]) -> Result[list[str], Exception]:
         results = []
         for name in names:
@@ -74,9 +74,9 @@ pip install dfns
     ```python
     async def main():
         # Setup Backend
-        backend = DFns.backends.SQLiteBackend("dfns.sqlite")
+        backend = Senpuki.backends.SQLiteBackend("senpuki.sqlite")
         await backend.init_db()
-        executor = DFns(backend=backend)
+        executor = Senpuki(backend=backend)
 
         # Start a Worker (in background)
         worker = asyncio.create_task(executor.serve())
@@ -105,12 +105,12 @@ pip install dfns
 
 ### Defining Durable Functions
 
-Use the `@DFns.durable` decorator. You can configure retry policies, caching, and queues here.
+Use the `@Senpuki.durable` decorator. You can configure retry policies, caching, and queues here.
 
 ```python
-from dfns import DFns, RetryPolicy
+from senpuki import Senpuki, RetryPolicy
 
-@DFns.durable(
+@Senpuki.durable(
     retry_policy=RetryPolicy(max_attempts=3, initial_delay=1.0),
     queue="high_priority",
     tags=["billing"]
@@ -121,14 +121,14 @@ async def charge_card(amount: int):
 
 ### Orchestration & Activities
 
-When a durable function calls another durable function (e.g., `await other_func()`), DFns intercepts this call.
+When a durable function calls another durable function (e.g., `await other_func()`), Senpuki intercepts this call.
 *   It persists a **Task** record for the child function.
 *   The parent function "sleeps" (suspends) until the child task is completed by a worker.
 *   This allows workflows to run over days or weeks without consuming memory while waiting.
 
 ### Retries & Error Handling
 
-Failures happen. DFns allows declarative retry policies.
+Failures happen. Senpuki allows declarative retry policies.
 
 ```python
 policy = RetryPolicy(
@@ -138,7 +138,7 @@ policy = RetryPolicy(
     retry_for=(ConnectionError, ExpiryError) # Only retry these exceptions
 )
 
-@DFns.durable(retry_policy=policy)
+@Senpuki.durable(retry_policy=policy)
 async def unstable_api_call():
     ...
 ```
@@ -153,12 +153,12 @@ To prevent duplicate side-effects (like charging a card twice) or re-doing expen
 2.  **Caching**: Similar to idempotency but implies the result can be reused across different executions if the key matches.
 
 ```python
-@DFns.durable(idempotent=True)
+@Senpuki.durable(idempotent=True)
 async def send_email(user_id: str, subject: str):
     # Safe to call multiple times; will only execute once per unique arguments
     ...
 
-@DFns.durable(cached=True, version="v1")
+@Senpuki.durable(cached=True, version="v1")
 async def heavy_compute(data_hash: str):
     # Result stored in cache table; subsequent calls return immediately
     ...
@@ -166,10 +166,10 @@ async def heavy_compute(data_hash: str):
 
 ### Parallel Execution (Fan-out/Fan-in)
 
-Use standard `asyncio.gather` to run tasks in parallel. DFns schedules them all, and the worker pool executes them concurrently.
+Use standard `asyncio.gather` to run tasks in parallel. Senpuki schedules them all, and the worker pool executes them concurrently.
 
 ```python
-@DFns.durable()
+@Senpuki.durable()
 async def batch_processor(items: list[int]):
     tasks = []
     for item in items:
@@ -193,7 +193,7 @@ exec_id = await executor.dispatch(long_workflow, expiry="1h 30m")
 
 ## Architecture & Backends
 
-DFns is backend-agnostic.
+Senpuki is backend-agnostic.
 
 ### SQLite Backend
 Included by default. Stores state in a local SQLite file.
@@ -219,8 +219,8 @@ The `executor.serve()` method runs the worker loop. In production, you typically
 ```python
 # worker.py
 async def run_worker():
-    backend = DFns.backends.SQLiteBackend("prod.db")
-    executor = DFns(backend=backend)
+    backend = Senpuki.backends.SQLiteBackend("prod.db")
+    executor = Senpuki(backend=backend)
     
     # Consume only specific queues
     await executor.serve(

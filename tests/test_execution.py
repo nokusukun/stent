@@ -3,27 +3,27 @@ import asyncio
 import os
 import shutil
 from datetime import datetime, timedelta
-from dfns import DFns, Result, RetryPolicy
-from dfns.registry import registry
+from senpuki import Senpuki, Result, RetryPolicy
+from senpuki.registry import registry
 from tests.utils import get_test_backend, cleanup_test_backend
 
 # Define some test functions globally so pickle/registry can find them
-@DFns.durable()
+@Senpuki.durable()
 async def simple_task(x: int) -> int:
     return x * 2
 
-@DFns.durable()
+@Senpuki.durable()
 async def failing_task():
     raise ValueError("I failed")
 
-@DFns.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=0.01, backoff_factor=1.0))
+@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=0.01, backoff_factor=1.0))
 async def retryable_task(succeed_on_attempt: int):
     pass
 
 ATTEMPT_COUNTER = {}
 RECOVERY_TEST_STATE = {"first_run": True}
 
-@DFns.durable()
+@Senpuki.durable()
 async def recovery_task():
     # If it's the first run (simulated crash), we sleep to allow cancellation
     if RECOVERY_TEST_STATE["first_run"]:
@@ -31,7 +31,7 @@ async def recovery_task():
         await asyncio.sleep(10) 
     return "recovered"
 
-@DFns.durable(retry_policy=RetryPolicy(max_attempts=4, initial_delay=0.01))
+@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=4, initial_delay=0.01))
 async def stateful_retry_task(exec_id_for_counter: str):
     count = ATTEMPT_COUNTER.get(exec_id_for_counter, 0) + 1
     ATTEMPT_COUNTER[exec_id_for_counter] = count
@@ -39,11 +39,11 @@ async def stateful_retry_task(exec_id_for_counter: str):
         raise ValueError(f"Fail attempt {count}")
     return count
 
-@DFns.durable(queue="high_priority_queue", tags=["data_processing"])
+@Senpuki.durable(queue="high_priority_queue", tags=["data_processing"])
 async def high_priority_data_task(data: str) -> str:
     return f"Processed {data} with high priority"
 
-@DFns.durable(queue="low_priority_queue", tags=["reporting"])
+@Senpuki.durable(queue="low_priority_queue", tags=["reporting"])
 async def low_priority_report_task(report_id: str) -> str:
     return f"Generated report {report_id}"
 
@@ -52,7 +52,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = get_test_backend(f"{os.getpid()}_{id(self)}")
         await self.backend.init_db()
-        self.executor = DFns(backend=self.backend)
+        self.executor = Senpuki(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
     async def asyncTearDown(self):
@@ -111,7 +111,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
             pass
 
         # Start a worker only for high_priority_queue
-        hp_executor = DFns(backend=self.backend)
+        hp_executor = Senpuki(backend=self.backend)
         hp_worker_task = asyncio.create_task(hp_executor.serve(queues=["high_priority_queue"], poll_interval=0.1))
         
         hp_result = await self._wait_for_result(hp_exec_id)
@@ -128,7 +128,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
             pass
 
         # Start a worker for low_priority_queue
-        lp_executor = DFns(backend=self.backend)
+        lp_executor = Senpuki(backend=self.backend)
         lp_worker_task = asyncio.create_task(lp_executor.serve(queues=["low_priority_queue"], poll_interval=0.1))
         
         lp_result = await self._wait_for_result(lp_exec_id)

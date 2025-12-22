@@ -2,17 +2,17 @@ import unittest
 import asyncio
 import os
 import logging
-from dfns import DFns, Result, sleep
+from senpuki import Senpuki, Result, sleep
 from tests.utils import get_test_backend, cleanup_test_backend
 
 logger = logging.getLogger(__name__)
 
-@DFns.durable()
+@Senpuki.durable()
 async def sleep_task():
     await sleep("0.2s")
     return "done"
 
-@DFns.durable()
+@Senpuki.durable()
 async def noop_task():
     pass
 
@@ -20,7 +20,7 @@ class TestHelpers(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = get_test_backend(f"helpers_{os.getpid()}")
         await self.backend.init_db()
-        self.executor = DFns(backend=self.backend)
+        self.executor = Senpuki(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
     async def asyncTearDown(self):

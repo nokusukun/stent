@@ -1,36 +1,37 @@
+from typing import Any
 import asyncio
 import random
 import logging
-from dfns import DFns
+from senpuki import Senpuki
 
 # Configure logging to see what's happening
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # 1. Define Activities
-@DFns.durable()
+@Senpuki.durable()
 async def fetch_url(url: str) -> str:
     """Simulates fetching a webpage with variable latency."""
     # Simulate network latency (0.5 to 2.0 seconds)
-    # We use DFns.sleep to be "good citizens" and release the worker
+    # We use Senpuki.sleep to be "good citizens" and release the worker
     delay = random.uniform(0.5, 2.0)
-    await DFns.sleep(f"{delay:.2f}s")
+    await Senpuki.sleep(f"{delay:.2f}s")
     
     if "error" in url:
         raise ValueError(f"404 Not Found: {url}")
         
     return f"<html><body><h1>Content of {url}</h1><p>Some interesting text here.</p></body></html>"
 
-@DFns.durable()
+@Senpuki.durable()
 async def analyze_sentiment(content: str) -> dict:
     """Simulates CPU-intensive analysis."""
     await asyncio.sleep(0.1) # Simulate CPU work
     return {
         "score": random.randint(0, 100),
-        "keywords": ["dfns", "python", "durable"]
+        "keywords": ["senpuki", "python", "durable"]
     }
 
 # 2. Define Sub-Orchestrator
-@DFns.durable()
+@Senpuki.durable()
 async def process_page(url: str) -> dict:
     """
     Orchestrates the processing of a single page.
@@ -51,7 +52,7 @@ async def process_page(url: str) -> dict:
     }
 
 # 3. Define Main Orchestrator
-@DFns.durable()
+@Senpuki.durable()
 async def site_crawler(urls: list[str]) -> dict:
     """
     Main workflow that fans out to process multiple pages and fans in to aggregate results.
@@ -64,7 +65,7 @@ async def site_crawler(urls: list[str]) -> dict:
     
     # Fan-in: Wait for all to complete.
     # return_exceptions=True allows the workflow to continue even if some pages fail.
-    results = await DFns.gather(*tasks, return_exceptions=True)
+    results: list[Any | BaseException] = await Senpuki.gather(*tasks, return_exceptions=True)
     
     # Aggregation Logic
     report = {
@@ -79,7 +80,7 @@ async def site_crawler(urls: list[str]) -> dict:
     total_score = 0
     
     for url, res in zip(urls, results):
-        if isinstance(res, Exception):
+        if isinstance(res, Exception) or isinstance(res, BaseException):
             report["failed"] += 1
             report["failures"].append({"url": url, "error": str(res)})
         else:
@@ -95,9 +96,9 @@ async def site_crawler(urls: list[str]) -> dict:
 # 4. Run the example
 async def main():
     # Setup backend and executor
-    backend = DFns.backends.SQLiteBackend("complex_gather.sqlite")
+    backend = Senpuki.backends.SQLiteBackend("complex_gather.sqlite")
     await backend.init_db()
-    executor = DFns(backend=backend)
+    executor = Senpuki(backend=backend)
     
     # Start worker in background (high concurrency for parallel tasks)
     worker_task = asyncio.create_task(executor.serve(max_concurrency=20))

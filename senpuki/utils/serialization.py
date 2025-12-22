@@ -2,7 +2,7 @@ from typing import Protocol, Any, Dict
 import json
 import pickle
 import base64
-from dfns.core import Result, RetryPolicy
+from senpuki.core import Result, RetryPolicy
 
 class Serializer(Protocol):
     def dumps(self, obj: Any) -> bytes: ...

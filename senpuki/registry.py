@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable, Awaitable, Any, List, Optional
-from dfns.core import RetryPolicy
+from senpuki.core import RetryPolicy
 
 @dataclass
 class FunctionMetadata:

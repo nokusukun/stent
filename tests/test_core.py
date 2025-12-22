@@ -1,9 +1,9 @@
 import unittest
 import json
 from datetime import timedelta
-from dfns.core import Result, RetryPolicy, compute_retry_delay
-from dfns.utils.serialization import JsonSerializer
-from dfns.utils.time import parse_duration
+from senpuki.core import Result, RetryPolicy, compute_retry_delay
+from senpuki.utils.serialization import JsonSerializer
+from senpuki.utils.time import parse_duration
 
 class TestCore(unittest.TestCase):
     def test_result_serialization(self):

@@ -1,6 +1,6 @@
 from typing import Protocol, List, Optional
 from datetime import datetime, timedelta
-from dfns.core import ExecutionRecord, TaskRecord, ExecutionProgress
+from senpuki.core import ExecutionRecord, TaskRecord, ExecutionProgress
 
 class Backend(Protocol):
     async def init_db(self) -> None: ...

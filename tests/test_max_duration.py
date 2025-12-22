@@ -1,10 +1,10 @@
 import asyncio
 import unittest
 from datetime import timedelta
-from dfns import DFns, Result
+from senpuki import Senpuki, Result
 from tests.utils import get_test_backend, cleanup_test_backend
 
-@DFns.durable()
+@Senpuki.durable()
 async def long_running_task(duration_sec: float) -> str:
     await asyncio.sleep(duration_sec)
     return "done"
@@ -13,7 +13,7 @@ class TestMaxDuration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = get_test_backend(f"max_duration")
         await self.backend.init_db()
-        self.executor = DFns(backend=self.backend)
+        self.executor = Senpuki(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
     async def asyncTearDown(self):

@@ -2,9 +2,9 @@
 
 # Directories to analyze
 project-includes = [
-    "dfns",
+    "senpuki",
     "examples",
-    "tests"
+    "tests",
 ]
 
 # Target Python version and platform

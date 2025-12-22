@@ -1,9 +1,9 @@
 import os
 import pytest
-from dfns import DFns
+from senpuki import Senpuki
 
 def get_test_backend(test_id: str):
-    backend_type = os.environ.get("DFNS_TEST_BACKEND", "sqlite")
+    backend_type = os.environ.get("SENPUKI_TEST_BACKEND", "sqlite")
     
     if backend_type == "postgres":
         # Assumes a running postgres instance, e.g. via docker
@@ -12,11 +12,11 @@ def get_test_backend(test_id: str):
         # For simplicity, let's assume a single test db and we clear tables or use unique prefixes if needed.
         # BUT, standard practice for concurrent tests is separate DBs or schemas.
         # Here we will rely on the caller to cleanup or we can use a single DB and init_db ensures tables exist.
-        dsn = os.environ.get("DFNS_TEST_PG_DSN", "postgres://postgres:postgres@localhost:5432/dfns_test")
-        return DFns.backends.PostgresBackend(dsn)
+        dsn = os.environ.get("SENPUKI_TEST_PG_DSN", "postgres://postgres:postgres@localhost:5432/senpuki_test")
+        return Senpuki.backends.PostgresBackend(dsn)
     else:
-        db_path = f"test_dfns_{test_id}.sqlite"
-        return DFns.backends.SQLiteBackend(db_path)
+        db_path = f"test_senpuki_{test_id}.sqlite"
+        return Senpuki.backends.SQLiteBackend(db_path)
 
 async def cleanup_test_backend(backend):
     if hasattr(backend, "db_path"):

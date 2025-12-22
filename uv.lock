@@ -63,7 +63,7 @@ wheels = [
 ]
 
 [[package]]
-name = "dfns"
+name = "senpuki"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

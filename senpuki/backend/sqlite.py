@@ -4,8 +4,8 @@ import json
 import logging # Import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Any
-from dfns.backend.base import Backend
-from dfns.core import ExecutionRecord, TaskRecord, ExecutionProgress, RetryPolicy
+from senpuki.backend.base import Backend
+from senpuki.core import ExecutionRecord, TaskRecord, ExecutionProgress, RetryPolicy
 
 logger = logging.getLogger(__name__)
 

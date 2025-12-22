@@ -7,16 +7,16 @@ from datetime import datetime, timedelta
 from typing import Callable, Awaitable, Any, List, Literal, Optional
 from contextvars import ContextVar
 
-from dfns.core import (
+from senpuki.core import (
     Result, RetryPolicy, ExecutionRecord, TaskRecord, ExecutionProgress, 
     ExecutionState, compute_retry_delay
 )
-from dfns.backend.base import Backend
-from dfns.notifications.base import NotificationBackend
-from dfns.registry import registry, FunctionMetadata
-from dfns.utils.serialization import Serializer, JsonSerializer
-from dfns.utils.idempotency import default_idempotency_key
-from dfns.utils.time import parse_duration
+from senpuki.backend.base import Backend
+from senpuki.notifications.base import NotificationBackend
+from senpuki.registry import registry, FunctionMetadata
+from senpuki.utils.serialization import Serializer, JsonSerializer
+from senpuki.utils.idempotency import default_idempotency_key
+from senpuki.utils.time import parse_duration
 
 from dataclasses import dataclass
 
@@ -44,7 +44,7 @@ class PermitHolder:
 class Backends:
     @staticmethod
     def SQLiteBackend(path: str) -> Backend:
-        from dfns.backend.sqlite import SQLiteBackend
+        from senpuki.backend.sqlite import SQLiteBackend
         return SQLiteBackend(path)
 
     @staticmethod
@@ -54,24 +54,24 @@ class Backends:
 
     @staticmethod
     def PostgresBackend(dsn: str) -> Backend:
-        from dfns.backend.postgres import PostgresBackend
+        from senpuki.backend.postgres import PostgresBackend
         return PostgresBackend(dsn)
 
 class Notifications:
     @staticmethod
     def RedisBackend(url: str) -> NotificationBackend:
-        from dfns.notifications.redis import RedisBackend
+        from senpuki.notifications.redis import RedisBackend
         return RedisBackend(url)
 
 # Capture original sleep before any patching
 _original_sleep = asyncio.sleep
 
-current_execution_id: ContextVar[str | None] = ContextVar("dfns_execution_id", default=None)
-current_task_id: ContextVar[str | None] = ContextVar("dfns_task_id", default=None)
-current_worker_semaphore: ContextVar[asyncio.Semaphore | None] = ContextVar("dfns_worker_semaphore", default=None)
-current_permit_holder: ContextVar[PermitHolder | None] = ContextVar("dfns_permit_holder", default=None)
+current_execution_id: ContextVar[str | None] = ContextVar("senpuki_execution_id", default=None)
+current_task_id: ContextVar[str | None] = ContextVar("senpuki_task_id", default=None)
+current_worker_semaphore: ContextVar[asyncio.Semaphore | None] = ContextVar("senpuki_worker_semaphore", default=None)
+current_permit_holder: ContextVar[PermitHolder | None] = ContextVar("senpuki_permit_holder", default=None)
 
-class DFns:
+class Senpuki:
     backends = Backends
     notifications = Notifications
     mute_async_sleep_notifications = False
@@ -90,7 +90,7 @@ class DFns:
                 self.serializer = JsonSerializer()
             else:
                  # Local import to avoid circular dependency if pickle serializer was here
-                from dfns.utils.serialization import PickleSerializer
+                from senpuki.utils.serialization import PickleSerializer
                 self.serializer = PickleSerializer()
         else:
             self.serializer = serializer
@@ -105,7 +105,7 @@ class DFns:
             pass
             
         meta = FunctionMetadata(
-            name="dfns.sleep",
+            name="senpuki.sleep",
             fn=sleep_impl,
             cached=False,
             retry_policy=RetryPolicy(),
@@ -119,7 +119,7 @@ class DFns:
         registry.register(meta)
 
     def _patch_asyncio_sleep(self):
-        if getattr(asyncio.sleep, "_is_dfns_patch", False):
+        if getattr(asyncio.sleep, "_is_senpuki_patch", False):
             return
 
         original_sleep = asyncio.sleep
@@ -127,10 +127,10 @@ class DFns:
         @functools.wraps(original_sleep)
         async def warning_sleep(delay, result=None):
             if current_execution_id.get() and not self.mute_async_sleep_notifications:
-                 logger.warning(f"Detected asyncio.sleep({delay}) inside a durable function. Use 'await dfns.sleep(...)' to release worker capacity.")
+                 logger.warning(f"Detected asyncio.sleep({delay}) inside a durable function. Use 'await senpuki.sleep(...)' to release worker capacity.")
             return await original_sleep(delay, result)
         
-        warning_sleep._is_dfns_patch = True # pyrefly: ignore
+        warning_sleep._is_senpuki_patch = True # pyrefly: ignore
         asyncio.sleep = warning_sleep # pyrefly: ignore
 
     async def schedule(
@@ -154,7 +154,7 @@ class DFns:
         # Local import or direct call to global sleep if available in scope
         # Since 'sleep' is defined at the end of this file, we can't call it directly if it's not defined yet.
         # But methods are bound at runtime.
-        # However, 'sleep' is defined AFTER 'DFns' class.
+        # However, 'sleep' is defined AFTER 'Senpuki' class.
         # We can use 'current_executor' directly here.
         executor = current_executor.get()
         if executor:
@@ -169,9 +169,9 @@ class DFns:
         This releases the worker to process other tasks while waiting.
         """
         d = parse_duration(duration)
-        meta = registry.get("dfns.sleep")
+        meta = registry.get("senpuki.sleep")
         if not meta:
-             raise Exception("dfns.sleep not registered")
+             raise Exception("senpuki.sleep not registered")
         
         # Schedule the sleep task to run AFTER the duration.
         # The orchestrator will wait for it to complete.
@@ -225,7 +225,7 @@ class DFns:
          # This implementation assumes the user uses @durable. 
          # If wrap is used for external funcs, we might need a dynamic registration or special handling.
          # For simplicity, let's assume 'fn' here is already a @durable decorated function OR we create a temporary meta.
-         # The example usage: DFns.wrap(send_email, ("...", ...)) suggests send_email might NOT be durable.
+         # The example usage: Senpuki.wrap(send_email, ("...", ...)) suggests send_email might NOT be durable.
          
          # Let's create a dynamic meta if it's not registered.
          if kwargs is None:
@@ -247,7 +247,7 @@ class DFns:
                  version=None
              )
          
-         return await DFns._call_durable_stub(meta, args, kwargs)
+         return await Senpuki._call_durable_stub(meta, args, kwargs)
 
     @classmethod
     async def map(
@@ -259,7 +259,7 @@ class DFns:
         Efficiently schedules and waits for a function to be applied to each item in the iterable.
         Equivalent to `await asyncio.gather(*[fn(item) for item in iterable])` but with batch scheduling optimization.
         """
-        executor = current_executor.get()
+        executor: Optional[Senpuki] = current_executor.get()
         if not executor:
             # Local fallback
             return await asyncio.gather(*[fn(item) for item in iterable])
@@ -377,26 +377,25 @@ class DFns:
             permit.release()
 
         try:
-
             async def waiter(item):
                 if isinstance(item, TaskRecord):
                     # Use internal wait that DOES NOT touch semaphore
-                    completed = await executor._wait_for_task_internal(item.id)
+                    completed = await executor._wait_for_task_internal(item.id) # pyrefly: ignore[missing-attribute]
                     if completed.state == "failed":
                         if completed.error:
-                            err = executor.serializer.loads(completed.error)
+                            err = executor.serializer.loads(completed.error) #  pyrefly: ignore[missing-attribute]
                             if isinstance(err, BaseException):
                                  raise err
                             raise Exception(str(err))
                         raise Exception("Task failed")
                     
-                    res = executor.serializer.loads(completed.result)
+                    res = executor.serializer.loads(completed.result) #  pyrefly: ignore[missing-attribute]
                     # Store cache/idempotency
                     if item.idempotency_key:
-                        if meta.cached:
-                            await executor.backend.set_cached_result(item.idempotency_key, completed.result)
-                        if meta.idempotent:
-                            await executor.backend.set_idempotency_result(item.idempotency_key, completed.result)
+                        if meta.cached: #  pyrefly: ignore[missing-attribute]
+                            await executor.backend.set_cached_result(item.idempotency_key, completed.result) #  pyrefly: ignore[missing-attribute]
+                        if meta.idempotent: #  pyrefly: ignore[missing-attribute]
+                            await executor.backend.set_idempotency_result(item.idempotency_key, completed.result) #  pyrefly: ignore[missing-attribute]
                     return res
                 else:
                     return item
@@ -410,9 +409,9 @@ class DFns:
     async def gather(cls, *tasks, **kwargs):
         """
         Alias for asyncio.gather. 
-        Note: If you pass function calls (e.g. `dfns.gather(func(1), func(2))`), 
+        Note: If you pass function calls (e.g. `senpuki.gather(func(1), func(2))`), 
         they are scheduled immediately when called, not batched by gather.
-        Use `dfns.map` for batch scheduling optimization if applicable.
+        Use `senpuki.map` for batch scheduling optimization if applicable.
         
         Supports `return_exceptions=True`.
         """
@@ -1027,12 +1026,12 @@ class DFns:
             current_permit_holder.reset(token_permit)
 
 # Context var for executor instance
-current_executor: ContextVar[Optional[DFns]] = ContextVar("dfns_executor", default=None)
+current_executor: ContextVar[Optional[Senpuki]] = ContextVar("senpuki_executor", default=None)
 
 
 
-DFns.backends = Backends
-DFns.notifications = Notifications
+Senpuki.backends = Backends
+Senpuki.notifications = Notifications
 
 async def sleep(duration: str | dict | timedelta):
     """

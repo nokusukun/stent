@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from typing import Any # Import Any
-from dfns.utils.serialization import Serializer, JsonSerializer
+from senpuki.utils.serialization import Serializer, JsonSerializer
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@ import logging
 import traceback
 import multiprocessing
 from datetime import datetime, timedelta
-from dfns import DFns, Result, RetryPolicy
+from senpuki import Senpuki, Result, RetryPolicy
 
 # Disable extensive logging for the dashboard effect, only errors
 logging.basicConfig(level=logging.ERROR)
@@ -21,49 +21,49 @@ LEASE_DURATION = timedelta(seconds=5)
 
 ACTIVITY_QUEUE = "processing_queue"
 
-@DFns.durable(queue=ACTIVITY_QUEUE)
+@Senpuki.durable(queue=ACTIVITY_QUEUE)
 async def validate_upload(file_name: str) -> bool:
     await asyncio.sleep(random.uniform(0.5, 1.5))
     if "corrupt" in file_name:
         raise ValueError(f"File {file_name} header is corrupt")
     return True
 
-@DFns.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=1.0), queue=ACTIVITY_QUEUE)
+@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=1.0), queue=ACTIVITY_QUEUE)
 async def scan_for_safety(file_name: str) -> str:
     await asyncio.sleep(random.uniform(1.0, 2.5))
     if random.random() < 0.05: raise ConnectionError("Safety API expiry")
     if random.random() < 0.02: return "flagged"
     return "clean"
 
-@DFns.durable(queue=ACTIVITY_QUEUE, cached=True)
+@Senpuki.durable(queue=ACTIVITY_QUEUE, cached=True)
 async def extract_audio(file_name: str) -> str:
     await asyncio.sleep(random.uniform(1.5, 3.0))
     return f"{file_name}.wav"
 
-@DFns.durable(queue="gpu_tasks", cached=True)
+@Senpuki.durable(queue="gpu_tasks", cached=True)
 async def transcribe_audio(audio_file: str) -> str:
     duration = random.uniform(3.0, 6.0)
     await asyncio.sleep(duration)
     return f"Transcription({int(duration)}s)"
 
-@DFns.durable(queue="gpu_tasks", cached=True)
+@Senpuki.durable(queue="gpu_tasks", cached=True)
 async def generate_thumbnails(file_name: str) -> list[str]:
     await asyncio.sleep(random.uniform(2.0, 4.0))
     return [f"thumb_{i}.jpg" for i in range(3)]
 
-@DFns.durable(queue=ACTIVITY_QUEUE, cached=True)
+@Senpuki.durable(queue=ACTIVITY_QUEUE, cached=True)
 async def generate_metadata(transcription: str) -> dict:
     await asyncio.sleep(random.uniform(1.0, 2.0))
     return {"tags": ["viral"], "sentiment": "positive"}
 
-@DFns.durable(queue=ACTIVITY_QUEUE)
+@Senpuki.durable(queue=ACTIVITY_QUEUE)
 async def package_assets(file_name: str, transcription: str, thumbs: list[str], metadata: dict) -> str:
     await asyncio.sleep(random.uniform(0.5, 1.0))
     return f"s3://{file_name}.zip"
 
 # --- Orchestrator ---
 
-@DFns.durable()
+@Senpuki.durable()
 async def media_processing_pipeline(file_name: str) -> Result[dict, Exception]:
     try:
         await validate_upload(file_name)
@@ -83,7 +83,7 @@ async def media_processing_pipeline(file_name: str) -> Result[dict, Exception]:
     except Exception as e:
         return Result.Error(e)
 
-@DFns.durable()
+@Senpuki.durable()
 async def process_audio_chain(file_name: str):
     audio_path = await extract_audio(file_name)
     text = await transcribe_audio(audio_path)
@@ -97,9 +97,9 @@ def run_worker_process(db_path, queues, worker_id, lease_duration_seconds):
     logging.basicConfig(level=logging.ERROR)
     
     async def _run():
-        backend = DFns.backends.SQLiteBackend(db_path)
+        backend = Senpuki.backends.SQLiteBackend(db_path)
         # No init_db here, assumed done by main
-        executor = DFns(backend=backend)
+        executor = Senpuki(backend=backend)
         await executor.serve(
             max_concurrency=1,
             poll_interval=0.1,
@@ -186,9 +186,9 @@ async def main():
     multiprocessing.set_start_method("spawn", force=True)
     
     if os.path.exists(DB_PATH): os.remove(DB_PATH)
-    backend = DFns.backends.SQLiteBackend(DB_PATH)
+    backend = Senpuki.backends.SQLiteBackend(DB_PATH)
     await backend.init_db()
-    executor = DFns(backend=backend)
+    executor = Senpuki(backend=backend)
     
     # We store metadata about processes here
     # List of dicts: {'id': str, 'type': str, 'process': Process, 'queues': list}

@@ -2,14 +2,14 @@ import asyncio
 import os
 import logging
 import random
-from dfns import DFns, Result
+from senpuki import Senpuki, Result
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger("BatchExample")
 
 # --- Activities ---
 
-@DFns.durable()
+@Senpuki.durable()
 async def download_image(image_id: int) -> str:
     # Simulate network IO
     delay = random.uniform(0.1, 0.5)
@@ -22,7 +22,7 @@ async def download_image(image_id: int) -> str:
     logger.info(f"Downloaded image {image_id} to {path} ({delay:.2f}s)")
     return path
 
-@DFns.durable()
+@Senpuki.durable()
 async def process_image(path: str) -> str:
     # Simulate CPU intensive work
     await asyncio.sleep(0.2)
@@ -30,7 +30,7 @@ async def process_image(path: str) -> str:
     logger.info(f"Processed {path} -> {processed_path}")
     return processed_path
 
-@DFns.durable()
+@Senpuki.durable()
 async def create_gallery(image_paths: list[str]) -> str:
     await asyncio.sleep(0.5)
     logger.info(f"Creating gallery from {len(image_paths)} images")
@@ -38,7 +38,7 @@ async def create_gallery(image_paths: list[str]) -> str:
 
 # --- Orchestrator ---
 
-@DFns.durable()
+@Senpuki.durable()
 async def batch_image_workflow(image_ids: list[int]) -> Result[str, Exception]:
     logger.info(f"Starting batch workflow for {len(image_ids)} images")
     
@@ -81,10 +81,10 @@ async def main():
     if os.path.exists(db_path):
         os.remove(db_path)
     
-    backend = DFns.backends.SQLiteBackend(db_path)
+    backend = Senpuki.backends.SQLiteBackend(db_path)
     await backend.init_db()
     
-    executor = DFns(backend=backend)
+    executor = Senpuki(backend=backend)
     
     # Start worker with concurrency
     worker_task = asyncio.create_task(executor.serve(poll_interval=0.1, max_concurrency=20))

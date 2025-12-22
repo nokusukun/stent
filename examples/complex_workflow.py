@@ -2,13 +2,13 @@ import asyncio
 import os
 import logging
 from datetime import timedelta
-from dfns import DFns, Result, RetryPolicy
+from senpuki import Senpuki, Result, RetryPolicy
 
 logging.basicConfig(level=logging.INFO)
 
 # --- Durable Functions Definition ---
 
-@DFns.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=0.1))
+@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=0.1))
 async def fetch_external_data(url: str) -> Result[str, Exception]:
     # Simulate external API call that might fail
     print(f"[Task] Fetching data from {url}")
@@ -17,7 +17,7 @@ async def fetch_external_data(url: str) -> Result[str, Exception]:
         raise ConnectionError(f"Failed to connect to {url}")
     return Result.Ok(f"<data from {url}>")
 
-@DFns.durable(cached=True, version="v1.0")
+@Senpuki.durable(cached=True, version="v1.0")
 async def process_data_heavy(raw_data: str) -> Result[str, Exception]:
     # Simulate a CPU-bound or idempotent data processing task
     print(f"[Task] Processing data: {raw_data[:20]}...")
@@ -25,7 +25,7 @@ async def process_data_heavy(raw_data: str) -> Result[str, Exception]:
     processed = raw_data.upper().replace("DATA", "PROCESSED_DATA")
     return Result.Ok(processed)
 
-@DFns.durable(idempotent=True, queue="notifications")
+@Senpuki.durable(idempotent=True, queue="notifications")
 async def send_notification(recipient: str, subject: str, body: str) -> Result[bool, Exception]:
     # Simulate sending an email or other notification
     print(f"[Task] Sending notification to {recipient} with subject: {subject}")
@@ -34,7 +34,7 @@ async def send_notification(recipient: str, subject: str, body: str) -> Result[b
         raise ValueError("Invalid recipient for notification")
     return Result.Ok(True)
 
-@DFns.durable(tags=["orchestrator", "pipeline"])
+@Senpuki.durable(tags=["orchestrator", "pipeline"])
 async def complex_data_pipeline(config: dict) -> Result[dict, Exception]:
     print("[Orchestrator] Starting complex data pipeline")
 
@@ -78,7 +78,7 @@ async def complex_data_pipeline(config: dict) -> Result[dict, Exception]:
 
 # --- Main Execution Logic ---
 
-async def run_pipeline(executor: DFns, config: dict, expiry_str: str | None = None):
+async def run_pipeline(executor: Senpuki, config: dict, expiry_str: str | None = None):
     print(f"\n--- Running Pipeline with config: {config} ---")
     execution_id = await executor.dispatch(complex_data_pipeline, config, expiry=expiry_str)
     print(f"Dispatched pipeline execution ID: {execution_id}")
@@ -103,13 +103,13 @@ async def main():
     if os.path.exists(db_path):
         os.remove(db_path)
         
-    backend = DFns.backends.SQLiteBackend(db_path)
+    backend = Senpuki.backends.SQLiteBackend(db_path)
     await backend.init_db()
     
-    DFns.mute_async_sleep_notifications = True
-    executor = DFns(
+    Senpuki.mute_async_sleep_notifications = True
+    executor = Senpuki(
         backend=backend, 
-        notification_backend=DFns.notifications.RedisBackend("redis://localhost:6379")
+        notification_backend=Senpuki.notifications.RedisBackend("redis://localhost:6379")
         )
     
     # Start a worker that listens to all queues for now
