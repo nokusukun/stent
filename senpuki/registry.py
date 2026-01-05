@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, Awaitable, Any, List, Optional
+from typing import Callable, Awaitable, Any, List, ItemsView
 from senpuki.core import RetryPolicy
 
 @dataclass
@@ -25,6 +25,14 @@ class FunctionRegistry:
 
     def get(self, name: str) -> FunctionMetadata | None:
         return self._registry.get(name)
+
+    def items(self) -> ItemsView[str, FunctionMetadata]:
+        return self._registry.items()
+
+    def copy(self) -> "FunctionRegistry":
+        clone = FunctionRegistry()
+        clone._registry = dict(self._registry)
+        return clone
 
     def name_for_function(self, fn: Callable[..., Any]) -> str:
         # Simplistic implementation. In a real app we might need stable names regardless of import path.

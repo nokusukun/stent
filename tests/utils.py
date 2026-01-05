@@ -1,3 +1,4 @@
+import asyncio
 import os
 import pytest
 from senpuki import Senpuki
@@ -32,9 +33,18 @@ async def clear_test_backend(backend):
 
 async def cleanup_test_backend(backend):
     if hasattr(backend, "db_path"):
-        import os
-        if os.path.exists(backend.db_path):
-            os.remove(backend.db_path)
+        if not os.path.exists(backend.db_path):
+            return
+
+        for attempt in range(20):
+            try:
+                os.remove(backend.db_path)
+                return
+            except PermissionError:
+                # Windows keeps SQLite files locked briefly after connections close.
+                if attempt == 19:
+                    return
+                await asyncio.sleep(0.05 * (attempt + 1))
     elif hasattr(backend, "pool") and backend.pool:
          # For postgres, we might want to truncate tables
          async with backend.pool.acquire() as conn:

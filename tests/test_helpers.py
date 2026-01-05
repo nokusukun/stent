@@ -3,6 +3,7 @@ import asyncio
 import os
 import logging
 from senpuki import Senpuki, Result, sleep
+from senpuki.executor import _original_sleep
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,18 @@ class TestHelpers(unittest.IsolatedAsyncioTestCase):
             pass
         await self.executor.shutdown()
         await cleanup_test_backend(self.backend)
+
+    async def test_asyncio_sleep_not_patched(self):
+        self.assertIs(asyncio.sleep, _original_sleep)
+
+        observed = []
+
+        async def third_party_coroutine():
+            await asyncio.sleep(0.01)
+            observed.append("ok")
+
+        await third_party_coroutine()
+        self.assertEqual(observed, ["ok"])
 
     async def test_queue_depth(self):
         # Cancel default worker to prevent it from consuming tasks

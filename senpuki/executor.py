@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import contextlib
 import functools
 import uuid
 import logging
@@ -13,7 +14,7 @@ from senpuki.core import (
 )
 from senpuki.backend.base import Backend
 from senpuki.notifications.base import NotificationBackend
-from senpuki.registry import registry, FunctionMetadata
+from senpuki.registry import registry, FunctionMetadata, FunctionRegistry
 from senpuki.utils.serialization import Serializer, JsonSerializer
 from senpuki.utils.idempotency import default_idempotency_key
 from senpuki.utils.time import parse_duration
@@ -24,6 +25,17 @@ logger = logging.getLogger(__name__)
 
 class ExpiryError(TimeoutError):
     pass
+
+
+class UnregisteredFunctionError(RuntimeError):
+    def __init__(self, function_name: str):
+        message = (
+            f"No durable registration found for '{function_name}'. "
+            "Decorate the function with @Senpuki.durable() or register it on the "
+            "FunctionRegistry provided to the executor."
+        )
+        super().__init__(message)
+        self.function_name = function_name
 
 @dataclass
 class PermitHolder:
@@ -74,15 +86,20 @@ current_permit_holder: ContextVar[PermitHolder | None] = ContextVar("senpuki_per
 class Senpuki:
     backends = Backends
     notifications = Notifications
-    mute_async_sleep_notifications = False
+    default_registry: FunctionRegistry = registry
 
     def __init__(
         self,
         backend: Backend,
         serializer: Serializer | Literal["json", "pickle"] = "json",
         notification_backend: NotificationBackend | None = None,
+        poll_min_interval: float = 0.1,
+        poll_max_interval: float = 5.0,
+        poll_backoff_factor: float = 2.0,
+        function_registry: FunctionRegistry | None = None,
     ):
         self.backend = backend
+        self.registry = function_registry or self.default_registry
         self.serializer: Serializer
 
         if isinstance(serializer, str):
@@ -96,15 +113,20 @@ class Senpuki:
             self.serializer = serializer
             
         self.notification_backend = notification_backend
+        self.poll_min_interval = max(0.001, poll_min_interval)
+        self.poll_max_interval = max(self.poll_min_interval, poll_max_interval)
+        self.poll_backoff_factor = poll_backoff_factor if poll_backoff_factor >= 1.0 else 1.0
         
         # Tracks background asyncio.Task instances spawned by this executor so their
         # lifecycle can be managed (for example, awaiting or cleanup on shutdown).
         self.background_tasks: set[asyncio.Task[Any]] = set()
         
         self._register_builtin_tasks()
-        self._patch_asyncio_sleep()
 
     def _register_builtin_tasks(self):
+        if self.registry.get("senpuki.sleep"):
+            return
+
         async def sleep_impl(duration: float):
             pass
             
@@ -120,22 +142,7 @@ class Senpuki:
             idempotency_key_func=None,
             version="1.0"
         )
-        registry.register(meta)
-
-    def _patch_asyncio_sleep(self):
-        if getattr(asyncio.sleep, "_is_senpuki_patch", False):
-            return
-
-        original_sleep = asyncio.sleep
-        
-        @functools.wraps(original_sleep)
-        async def warning_sleep(delay, result=None):
-            if current_execution_id.get() and not self.mute_async_sleep_notifications:
-                 logger.warning(f"Detected asyncio.sleep({delay}) inside a durable function. Use 'await senpuki.sleep(...)' to release worker capacity.")
-            return await original_sleep(delay, result)
-        
-        warning_sleep._is_senpuki_patch = True # pyrefly: ignore
-        asyncio.sleep = warning_sleep # pyrefly: ignore
+        self.registry.register(meta)
 
     async def schedule(
         self, 
@@ -173,9 +180,12 @@ class Senpuki:
         This releases the worker to process other tasks while waiting.
         """
         d = parse_duration(duration)
-        meta = registry.get("senpuki.sleep")
+        meta = self.registry.get("senpuki.sleep")
         if not meta:
-             raise Exception("senpuki.sleep not registered")
+            self._register_builtin_tasks()
+            meta = self.registry.get("senpuki.sleep")
+        if not meta:
+            raise RuntimeError("senpuki.sleep not registered")
         
         # Schedule the sleep task to run AFTER the duration.
         # The orchestrator will wait for it to complete.
@@ -196,7 +206,8 @@ class Senpuki:
         max_concurrent: int | None = None,
     ):
         def decorator(fn):
-            name = registry.name_for_function(fn)
+            reg = cls.default_registry
+            name = reg.name_for_function(fn)
             meta = FunctionMetadata(
                 name=name,
                 fn=fn,
@@ -210,7 +221,7 @@ class Senpuki:
                 version=version,
                 max_concurrent=max_concurrent,
             )
-            registry.register(meta)
+            reg.register(meta)
 
             @functools.wraps(fn)
             async def stub(*args, **kwargs):
@@ -219,39 +230,19 @@ class Senpuki:
             return stub
         return decorator
 
-    @staticmethod
-    async def wrap(fn: Callable[..., Awaitable[Any]], args: tuple, kwargs: dict | None = None):
-         # Helper to wrap non-durable functions as activities
-         # We need a meta for them if we want to treat them as tasks.
-         # For now, let's assume this is called inside a durable function and we treat it as an activity.
-         # But wait, registry requires metadata.
-         # So wrapping arbitrary functions on the fly is tricky without registering them.
-         # This implementation assumes the user uses @durable. 
-         # If wrap is used for external funcs, we might need a dynamic registration or special handling.
-         # For simplicity, let's assume 'fn' here is already a @durable decorated function OR we create a temporary meta.
-         # The example usage: Senpuki.wrap(send_email, ("...", ...)) suggests send_email might NOT be durable.
-         
-         # Let's create a dynamic meta if it's not registered.
+    @classmethod
+    async def wrap(cls, fn: Callable[..., Awaitable[Any]], args: tuple, kwargs: dict | None = None):
          if kwargs is None:
              kwargs = {}
-             
-         name = registry.name_for_function(fn)
-         meta = registry.get(name)
+
+         executor = current_executor.get()
+         reg = executor.registry if executor else cls.default_registry
+         name = reg.name_for_function(fn)
+         meta = reg.get(name)
          if not meta:
-             meta = FunctionMetadata(
-                 name=name,
-                 fn=fn,
-                 cached=False,
-                 retry_policy=RetryPolicy(),
-                 tags=[],
-                 priority=0,
-                 queue=None,
-                 idempotent=False,
-                 idempotency_key_func=None,
-                 version=None
-             )
-         
-         return await Senpuki._call_durable_stub(meta, args, kwargs)
+             raise UnregisteredFunctionError(name)
+
+         return await cls._call_durable_stub(meta, args, kwargs)
 
     @classmethod
     async def map(
@@ -265,25 +256,13 @@ class Senpuki:
         """
         executor: Optional[Senpuki] = current_executor.get()
         if not executor:
-            # Local fallback
             return await asyncio.gather(*[fn(item) for item in iterable])
 
-        name = registry.name_for_function(fn)
-        meta = registry.get(name)
+        reg = executor.registry
+        name = reg.name_for_function(fn)
+        meta = reg.get(name)
         if not meta:
-             # Assume wrapper handles dynamic registration if needed, but for batch map we need strict mode or handle it.
-             # If fn is already the @durable decorated stub, getting its name via registry helper should work.
-             # If it's a raw function, we need to register it on the fly?
-             # For simplicity, require @durable.
-             # If we call fn(item) it calls _call_durable_stub. 
-             # We want to BYPASS _call_durable_stub's immediate scheduling.
-             # But accessing 'fn' which is the wrapper is tricky to unwrap to get meta reliably if not in registry.
-             # registry.name_for_function handles unwrapping if it's our stub.
-             pass
-        
-        if not meta:
-            # Fallback to standard gather if we can't find meta (e.g. dynamic wrapper issues)
-            return await asyncio.gather(*[fn(item) for item in iterable])
+            raise UnregisteredFunctionError(name)
 
         # Prepare tasks
         tasks_to_create: List[TaskRecord] = []
@@ -509,13 +488,11 @@ class Senpuki:
         queue: str | None = None,
         **kwargs,
     ) -> str:
-        name = registry.name_for_function(fn)
-        # Check registry
-        meta = registry.get(name)
+        reg = self.registry
+        name = reg.name_for_function(fn)
+        meta = reg.get(name)
         if not meta:
-            # Register on the fly if not decorated? Or fail? 
-            # Better to assume it was decorated.
-            pass
+            raise UnregisteredFunctionError(name)
 
         if expiry and max_duration:
             raise ValueError("Cannot provide both 'expiry' and 'max_duration'. Use 'max_duration' as 'expiry' is deprecated.")
@@ -555,9 +532,9 @@ class Senpuki:
             completed_at=None,
             expiry_at=expiry_at,
             progress=[],
-            tags=tags or (meta.tags if meta else []),
+            tags=tags or meta.tags,
             priority=priority,
-            queue=queue or (meta.queue if meta else None)
+            queue=queue or meta.queue
         )
         
         task = TaskRecord(
@@ -574,7 +551,7 @@ class Senpuki:
             tags=record.tags,
             priority=priority,
             queue=record.queue,
-            retry_policy=meta.retry_policy if meta else RetryPolicy(),
+            retry_policy=meta.retry_policy,
             scheduled_for=scheduled_for
         )
         
@@ -798,13 +775,15 @@ class Senpuki:
         else:
             # Poll
             start = datetime.now()
+            delay = self.poll_min_interval
             while True:
                 task = await self.backend.get_task(task_id)
                 if task and task.state in ("completed", "failed"):
                     return task
                 if expiry and (datetime.now() - start).total_seconds() > expiry:
                         raise ExpiryError(f"Task {task_id} timed out")
-                await _original_sleep(0.1)
+                await _original_sleep(delay)
+                delay = min(self.poll_max_interval, delay * self.poll_backoff_factor)
 
     async def _wait_for_task(self, task_id: str, expiry: float | None = None) -> TaskRecord:
         permit = current_permit_holder.get()
@@ -930,13 +909,33 @@ class Senpuki:
         tags: List[str] | None = None,
         max_concurrency: int = 10,
         lease_duration: timedelta = timedelta(minutes=5),
+        heartbeat_interval: timedelta | None = None,
         poll_interval: float = 1.0,
+        poll_interval_max: float | None = None,
+        poll_backoff_factor: float | None = None,
         cleanup_interval: float | None = 3600.0, # Default 1 hour
         retention_period: timedelta = timedelta(days=7),
     ):
         if not worker_id:
             worker_id = str(uuid.uuid4())
+
+        if heartbeat_interval is None and lease_duration > timedelta(0):
+            heartbeat_interval = lease_duration / 2
+            min_interval = timedelta(milliseconds=100)
+            if heartbeat_interval < min_interval:
+                heartbeat_interval = min_interval
+        elif heartbeat_interval is not None and heartbeat_interval <= timedelta(0):
+            heartbeat_interval = None
             
+        worker_poll_min = max(0.001, poll_interval)
+        worker_poll_max = poll_interval_max if poll_interval_max is not None else self.poll_max_interval
+        worker_poll_max = max(worker_poll_min, worker_poll_max)
+        worker_poll_backoff = (
+            poll_backoff_factor if poll_backoff_factor is not None and poll_backoff_factor >= 1.0
+            else self.poll_backoff_factor
+        )
+        current_poll_delay = worker_poll_min
+
         sem = asyncio.Semaphore(max_concurrency)
         logger.info(f"Worker {worker_id} started. Queues: {queues}")
         
@@ -954,7 +953,7 @@ class Senpuki:
 
                 # Collect concurrency limits
                 concurrency_limits = {}
-                for name, meta in registry._registry.items():
+                for name, meta in self.registry.items():
                     if meta.max_concurrent is not None:
                         concurrency_limits[name] = meta.max_concurrent
 
@@ -971,16 +970,25 @@ class Senpuki:
                     if task:
                         # logger.info(f"Worker claimed task {task.step_name} ({task.id})")
                         # Run in background
-                        bg_task = asyncio.create_task(self._handle_task(task, worker_id, lease_duration, sem))
+                        bg_task = asyncio.create_task(
+                            self._handle_task(task, worker_id, lease_duration, heartbeat_interval, sem)
+                        )
                         self.background_tasks.add(bg_task)
                         bg_task.add_done_callback(self.background_tasks.discard)
+                        current_poll_delay = worker_poll_min
                     else:
                         sem.release()
-                        await _original_sleep(poll_interval)
+                        await _original_sleep(current_poll_delay)
+                        current_poll_delay = min(
+                            worker_poll_max, current_poll_delay * worker_poll_backoff
+                        )
                 except Exception as e:
                     sem.release()
                     logger.error(f"Error in worker loop: {e}")
-                    await _original_sleep(poll_interval)
+                    await _original_sleep(current_poll_delay)
+                    current_poll_delay = min(
+                        worker_poll_max, current_poll_delay * worker_poll_backoff
+                    )
         except asyncio.CancelledError:
             logger.info("Worker cancelled")
             raise
@@ -1018,11 +1026,43 @@ class Senpuki:
                 logger.error(f"Cleanup failed: {e}")
                 await _original_sleep(60) # Wait a bit before retrying on error
 
+    async def _lease_heartbeat_loop(
+        self,
+        *,
+        task_id: str,
+        worker_id: str,
+        lease_duration: timedelta,
+        interval: timedelta,
+        stop_event: asyncio.Event,
+    ) -> None:
+        timeout = interval.total_seconds()
+        while True:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=timeout)
+                return
+            except asyncio.TimeoutError:
+                try:
+                    renewed = await self.backend.renew_task_lease(task_id, worker_id, lease_duration)
+                except Exception:
+                    logger.exception("Lease renewal failed for task %s", task_id)
+                    return
+
+                if not renewed:
+                    logger.warning(
+                        "Lease renewal lost for task %s on worker %s; allowing reclaim",
+                        task_id,
+                        worker_id,
+                    )
+                    return
+            except asyncio.CancelledError:
+                return
+
     async def _handle_task(
         self, 
         task: TaskRecord, 
         worker_id: str, 
         lease_duration: timedelta, 
+        heartbeat_interval: timedelta | None,
         sem: asyncio.Semaphore
     ):
         # logger.info(f"DEBUG: Starting _handle_task for {task.step_name} ({task.id})")
@@ -1033,6 +1073,8 @@ class Senpuki:
         token_permit = current_permit_holder.set(PermitHolder(sem))
         
         execution = None
+        heartbeat_task: asyncio.Task | None = None
+        heartbeat_stop: asyncio.Event | None = None
         try:
             # Check execution state or expiry
             execution = await self.backend.get_execution(task.execution_id)
@@ -1081,14 +1123,26 @@ class Senpuki:
             args = self.serializer.loads(task.args)
             kwargs = self.serializer.loads(task.kwargs)
             
-            meta = registry.get(task.step_name)
+            meta = self.registry.get(task.step_name)
             if not meta:
-                raise Exception(f"Function {task.step_name} not found")
+                raise UnregisteredFunctionError(task.step_name)
                 
             # Update progress
             await self.backend.append_progress(task.execution_id, ExecutionProgress(
                 step=task.step_name, status="running", started_at=datetime.now()
             ))
+
+            if heartbeat_interval:
+                heartbeat_stop = asyncio.Event()
+                heartbeat_task = asyncio.create_task(
+                    self._lease_heartbeat_loop(
+                        task_id=task.id,
+                        worker_id=worker_id,
+                        lease_duration=lease_duration,
+                        interval=heartbeat_interval,
+                        stop_event=heartbeat_stop,
+                    )
+                )
 
             # Execute
             # logger.info(f"Executing {task.step_name} with expiry {execution.expiry_at}")
@@ -1194,6 +1248,12 @@ class Senpuki:
                     await self.notification_backend.notify_task_updated(task.id, "failed")
 
         finally:
+            if heartbeat_stop:
+                heartbeat_stop.set()
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat_task
             sem.release()
             current_execution_id.reset(token_exec)
             current_task_id.reset(token_task)

@@ -119,6 +119,20 @@ async def charge_card(amount: int):
     ...
 ```
 
+Every durable workflow or activity must be registered. Decorate them with `@Senpuki.durable()` (or register metadata manually) before dispatching. Otherwise the executor raises `UnregisteredFunctionError` immediately, so missing registrations are caught up front instead of deep in a worker.
+
+Registrations live in a `FunctionRegistry`. Executors use the shared registry by default, but you can pass a custom one to isolate tests or multi-tenant hosts:
+
+```python
+from senpuki.registry import registry
+
+custom_registry = registry.copy()
+# modify/add registrations...
+executor = Senpuki(backend=backend, function_registry=custom_registry)
+```
+
+Only that executor sees `custom_registry`, so other tests or apps keep their own registry state.
+
 ### Orchestration & Activities
 
 When a durable function calls another durable function (e.g., `await other_func()`), Senpuki intercepts this call.
@@ -223,6 +237,10 @@ You can set a expiry for the entire execution. If it exceeds this duration, it i
 exec_id = await executor.dispatch(long_workflow, expiry="1h 30m")
 ```
 
+Expiry/max-duration timers start when an execution becomes eligible to run. If you also supply a `delay`,
+Senpuki waits for that schedule before starting the countdown so your workflow still receives the full
+duration once it begins. Without a delay, the timer starts immediately at dispatch time.
+
 ---
 
 ## Architecture & Backends
@@ -243,6 +261,7 @@ Included by default. Stores state in a local SQLite file.
 
 ### Redis (Notifications)
 Optional. Uses Redis Pub/Sub to notify orchestrators immediately when a task finishes, reducing polling latency.
+*   **Recommended for production**: Adaptive polling prevents hot loops, but Redis keeps latency low and eliminates extra DB load under scale.
 
 ---
 
@@ -262,12 +281,30 @@ async def run_worker():
         queues=["default", "high"],# Only process tasks in these queues
         tags=["billing", "email"], # Only process tasks with these tags
         max_concurrency=50,        # Max concurrent tasks per worker
-        poll_interval=1.0,         # DB polling interval when idle
+        poll_interval=0.5,         # Minimum DB polling interval when idle
+        poll_interval_max=5.0,     # Maximum backoff when idle
+        poll_backoff_factor=2.0,   # Exponential backoff factor
         lease_duration=timedelta(minutes=5), # Task lock duration
+        heartbeat_interval=timedelta(minutes=2), # Lease renewal cadence
         cleanup_interval=3600.0,   # Run cleanup every hour
         retention_period=timedelta(days=7)   # Delete executions older than 7 days
     )
 ```
+
+When Redis notifications aren't configured, Senpuki now uses adaptive polling everywhere it waits on the database. You can tune orchestration waiters globally via the executor constructor:
+
+```python
+executor = Senpuki(
+    backend=backend,
+    poll_min_interval=0.25,
+    poll_max_interval=3.0,
+    poll_backoff_factor=1.5,
+)
+```
+
+Workers share the same backoff strategy through `poll_interval`, `poll_interval_max`, and `poll_backoff_factor`. Long-running activities automatically renew their leases every `heartbeat_interval` (defaulting to half of `lease_duration` with a 100 ms floor), so duplicate execution only happens if the worker crashes and the heartbeat stops.
+
+> **Production tip:** Redis notifications are still the recommended way to unblock waiters in real time. Adaptive polling keeps database load under control when Redis is unavailable, but Pub/Sub provides the fastest and most efficient wake-ups.
 
 **Scaling:**
 Run multiple worker processes (or containers) pointing to the same database backend. They will automatically coordinate and distribute tasks.

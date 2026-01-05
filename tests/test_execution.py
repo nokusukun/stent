@@ -2,9 +2,11 @@ import unittest
 import asyncio
 import os
 import shutil
+import contextlib
 from datetime import datetime, timedelta
 from senpuki import Senpuki, Result, RetryPolicy
-from senpuki.registry import registry
+from senpuki.executor import UnregisteredFunctionError
+from senpuki.registry import registry, FunctionRegistry, FunctionMetadata
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 # Define some test functions globally so pickle/registry can find them
@@ -47,6 +49,19 @@ async def high_priority_data_task(data: str) -> str:
 async def low_priority_report_task(report_id: str) -> str:
     return f"Generated report {report_id}"
 
+LONG_TASK_INVOCATIONS = 0
+
+@Senpuki.durable()
+async def guarded_long_activity(duration: float) -> int:
+    global LONG_TASK_INVOCATIONS
+    LONG_TASK_INVOCATIONS += 1
+    await asyncio.sleep(duration)
+    return LONG_TASK_INVOCATIONS
+
+
+async def registry_isolated_workflow(value: int) -> int:
+    return value + 5
+
 
 class TestExecution(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -69,6 +84,52 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         exec_id = await self.executor.dispatch(simple_task, 21)
         result = await self._wait_for_result(exec_id)
         self.assertEqual(result.value, 42)
+
+    async def test_dispatch_requires_registered_function(self):
+        async def local_function():
+            return "nope"
+
+        with self.assertRaises(UnregisteredFunctionError):
+            await self.executor.dispatch(local_function)
+
+    async def test_executor_can_use_custom_registry(self):
+        with self.assertRaises(UnregisteredFunctionError):
+            await self.executor.dispatch(registry_isolated_workflow, 2)
+
+        custom_registry = FunctionRegistry()
+        custom_registry.register(
+            FunctionMetadata(
+                name=custom_registry.name_for_function(registry_isolated_workflow),
+                fn=registry_isolated_workflow,
+                cached=False,
+                retry_policy=RetryPolicy(),
+                tags=[],
+                priority=0,
+                queue=None,
+                idempotent=False,
+                idempotency_key_func=None,
+                version=None,
+            )
+        )
+
+        self.worker_task.cancel()
+        try:
+            await self.worker_task
+        except asyncio.CancelledError:
+            pass
+
+        custom_executor = Senpuki(backend=self.backend, function_registry=custom_registry)
+        custom_worker = asyncio.create_task(custom_executor.serve(poll_interval=0.05))
+
+        try:
+            exec_id = await custom_executor.dispatch(registry_isolated_workflow, 5)
+            result = await custom_executor.wait_for(exec_id, expiry=5.0)
+            self.assertEqual(result.value, 10)
+        finally:
+            custom_worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await custom_worker
+            await custom_executor.shutdown()
         
     async def test_failure_execution(self):
         exec_id = await self.executor.dispatch(failing_task)
@@ -221,6 +282,53 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
             await worker2
         except asyncio.CancelledError:
             pass
+
+    async def test_lease_renewal_prevents_duplicate_execution(self):
+        global LONG_TASK_INVOCATIONS
+        LONG_TASK_INVOCATIONS = 0
+
+        # Stop default worker to configure heartbeat workers
+        self.worker_task.cancel()
+        try:
+            await self.worker_task
+        except asyncio.CancelledError:
+            pass
+
+        lease_duration = timedelta(seconds=0.3)
+        heartbeat_interval = timedelta(seconds=0.1)
+
+        worker_exec1 = Senpuki(backend=self.backend)
+        worker_exec2 = Senpuki(backend=self.backend)
+        worker1 = asyncio.create_task(
+            worker_exec1.serve(
+                lease_duration=lease_duration,
+                heartbeat_interval=heartbeat_interval,
+                poll_interval=0.05,
+            )
+        )
+        worker2 = asyncio.create_task(
+            worker_exec2.serve(
+                lease_duration=lease_duration,
+                heartbeat_interval=heartbeat_interval,
+                poll_interval=0.05,
+            )
+        )
+
+        try:
+            exec_id = await self.executor.dispatch(guarded_long_activity, 0.8)
+            result = await self._wait_for_result(exec_id)
+            self.assertEqual(result.value, 1)
+            self.assertEqual(LONG_TASK_INVOCATIONS, 1)
+        finally:
+            worker1.cancel()
+            worker2.cancel()
+            for t in (worker1, worker2):
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+            await worker_exec1.shutdown()
+            await worker_exec2.shutdown()
 
     async def test_cleanup(self):
         # Stop default worker to manually control execution

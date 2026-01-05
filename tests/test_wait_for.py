@@ -2,8 +2,10 @@ import unittest
 import asyncio
 import os
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from senpuki import Senpuki, Result
+from senpuki.core import TaskRecord, RetryPolicy
+import senpuki.executor as executor_module
 from senpuki.executor import ExpiryError
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
@@ -72,3 +74,58 @@ class TestWaitFor(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.ok)
         self.assertLess(end - start, 1.0) # Should be instant-ish, but allow 1.0 for remote DB roundtrip
 
+
+
+class _PollingDummyBackend:
+    def __init__(self):
+        self.calls = 0
+
+    async def get_task(self, task_id: str):
+        self.calls += 1
+        if self.calls >= 4:
+            return TaskRecord(
+                id=task_id,
+                execution_id="exec",
+                step_name="test",
+                kind="activity",
+                parent_task_id=None,
+                state="completed",
+                args=b"",
+                kwargs=b"",
+                retries=0,
+                created_at=datetime.now(),
+                tags=[],
+                priority=0,
+                queue=None,
+                retry_policy=RetryPolicy(),
+                result=b"done",
+            )
+        return None
+
+
+class TestAdaptivePolling(unittest.IsolatedAsyncioTestCase):
+    async def test_waiter_backoff_without_notifications(self):
+        backend = _PollingDummyBackend()
+        executor = Senpuki(
+            backend=backend,
+            poll_min_interval=0.01,
+            poll_max_interval=0.04,
+            poll_backoff_factor=2.0,
+        )
+        executor.notification_backend = None
+
+        recorded = []
+        original_sleep = executor_module._original_sleep
+
+        async def fake_sleep(delay, result=None):
+            recorded.append(delay)
+            await asyncio.sleep(0)
+
+        executor_module._original_sleep = fake_sleep
+        try:
+            task = await executor._wait_for_task_internal("poll-task")
+            self.assertEqual(task.id, "poll-task")
+        finally:
+            executor_module._original_sleep = original_sleep
+
+        self.assertEqual(recorded, [0.01, 0.02, 0.04])

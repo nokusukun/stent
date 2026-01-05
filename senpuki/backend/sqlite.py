@@ -409,6 +409,25 @@ class SQLiteBackend(Backend):
                 await db.rollback()
                 raise
 
+    async def renew_task_lease(
+        self,
+        task_id: str,
+        worker_id: str,
+        lease_duration: timedelta,
+    ) -> bool:
+        new_expiry = datetime.now() + lease_duration
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                UPDATE tasks
+                SET lease_expires_at=?
+                WHERE id=? AND worker_id=? AND state='running'
+                """,
+                (new_expiry, task_id, worker_id),
+            )
+            await db.commit()
+            return (cursor.rowcount or 0) > 0
+
     async def list_tasks_for_execution(self, execution_id: str) -> List[TaskRecord]:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row

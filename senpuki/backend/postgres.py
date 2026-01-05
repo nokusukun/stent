@@ -389,6 +389,28 @@ class PostgresBackend(Backend):
                         return self._row_to_task(updated_row)
         return None
 
+    async def renew_task_lease(
+        self,
+        task_id: str,
+        worker_id: str,
+        lease_duration: timedelta,
+    ) -> bool:
+        assert self.pool is not None
+        expires_at = datetime.now() + lease_duration
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE tasks
+                SET lease_expires_at=$1
+                WHERE id=$2 AND worker_id=$3 AND state='running'
+                RETURNING id
+                """,
+                expires_at,
+                task_id,
+                worker_id,
+            )
+            return row is not None
+
     async def list_tasks_for_execution(self, execution_id: str) -> List[TaskRecord]:
         assert self.pool is not None
         async with self.pool.acquire() as conn:

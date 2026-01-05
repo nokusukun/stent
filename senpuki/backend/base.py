@@ -30,6 +30,13 @@ class Backend(Protocol):
         concurrency_limits: dict[str, int] | None = None,
     ) -> TaskRecord | None: ...
 
+    async def renew_task_lease(
+        self,
+        task_id: str,
+        worker_id: str,
+        lease_duration: timedelta,
+    ) -> bool: ...
+
     async def list_tasks_for_execution(self, execution_id: str) -> List[TaskRecord]: ...
 
     # progress
