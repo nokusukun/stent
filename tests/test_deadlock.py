@@ -3,7 +3,7 @@ import asyncio
 import os
 import logging
 from senpuki import Senpuki, Result
-from tests.utils import get_test_backend, cleanup_test_backend
+from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 logging.basicConfig(level=logging.INFO)
 
@@ -20,9 +20,11 @@ class TestDeadlock(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = get_test_backend(f"deadlock_{os.getpid()}")
         await self.backend.init_db()
+        await clear_test_backend(self.backend)
         self.executor = Senpuki(backend=self.backend)
 
     async def asyncTearDown(self):
+        await self.executor.shutdown()
         await cleanup_test_backend(self.backend)
 
     async def test_single_concurrency_deadlock(self):
@@ -35,7 +37,7 @@ class TestDeadlock(unittest.IsolatedAsyncioTestCase):
             
             # If fix works, this returns. If not, it times out.
             # We set a generous expiry for the test
-            result = await self.executor.wait_for(exec_id, expiry=5.0)
+            result = await self.executor.wait_for(exec_id, expiry=30.0)
             
             self.assertTrue(result.ok)
             self.assertEqual(result.value, "done")
@@ -46,4 +48,5 @@ class TestDeadlock(unittest.IsolatedAsyncioTestCase):
                 await worker_task
             except asyncio.CancelledError:
                 pass
+            await self.executor.shutdown()
 

@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime, timedelta
 from senpuki import Senpuki, Result, RetryPolicy
 from senpuki.registry import registry
-from tests.utils import get_test_backend, cleanup_test_backend
+from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 # Define some test functions globally so pickle/registry can find them
 @Senpuki.durable()
@@ -52,6 +52,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = get_test_backend(f"{os.getpid()}_{id(self)}")
         await self.backend.init_db()
+        await clear_test_backend(self.backend)
         self.executor = Senpuki(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
@@ -61,6 +62,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
             await self.worker_task
         except asyncio.CancelledError:
             pass
+        await self.executor.shutdown()
         await cleanup_test_backend(self.backend)
             
     async def test_simple_execution(self):
@@ -98,17 +100,19 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(root_task.retries, 2)
 
     async def test_queue_and_tags_filtering(self):
-        # Worker is currently serving all queues/tags by default
-        # Let's create tasks for different queues
-        hp_exec_id = await self.executor.dispatch(high_priority_data_task, "important_data")
-        lp_exec_id = await self.executor.dispatch(low_priority_report_task, "monthly_report")
-
-        # Stop default worker
+        # Stop default worker FIRST to prevent it from stealing tasks
         self.worker_task.cancel()
         try:
             await self.worker_task
         except asyncio.CancelledError:
             pass
+            
+        # Ensure any background tasks from default worker are done (though none should be there)
+        await self.executor.shutdown()
+
+        # Let's create tasks for different queues
+        hp_exec_id = await self.executor.dispatch(high_priority_data_task, "important_data")
+        lp_exec_id = await self.executor.dispatch(low_priority_report_task, "monthly_report")
 
         # Start a worker only for high_priority_queue
         hp_executor = Senpuki(backend=self.backend)
@@ -126,6 +130,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
             await hp_worker_task
         except asyncio.CancelledError:
             pass
+        await hp_executor.shutdown()
 
         # Start a worker for low_priority_queue
         lp_executor = Senpuki(backend=self.backend)
@@ -139,6 +144,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
             await lp_worker_task
         except asyncio.CancelledError:
             pass
+        await lp_executor.shutdown()
 
     async def test_lease_expiration_crash(self):
         RECOVERY_TEST_STATE["first_run"] = True
@@ -181,11 +187,12 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(target_task, "Could not find worker handler task")
         
         # 5. Simulate Crash: Cancel the handler task
-        target_task.cancel()
-        try:
-            await target_task
-        except asyncio.CancelledError:
-            pass
+        if target_task:
+            target_task.cancel()
+            try:
+                await target_task
+            except asyncio.CancelledError:
+                pass
             
         # Stop worker1 loop too
         worker1.cancel()

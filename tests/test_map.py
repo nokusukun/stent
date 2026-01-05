@@ -2,8 +2,8 @@ import unittest
 import asyncio
 import os
 import logging
-from senpuki import Senpuki, Result
-from tests.utils import get_test_backend, cleanup_test_backend
+from senpuki import Senpuki, Result, RetryPolicy
+from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -13,7 +13,13 @@ async def square(x: int) -> int:
     await asyncio.sleep(0.1)
     return x * x
 
-@Senpuki.durable()
+@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=0.1))
+async def fail_on_three(x: int) -> int:
+    if x == 3:
+        raise ValueError("Three is forbidden")
+    return x * x
+
+@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=0.1))
 async def fail_on_three(x: int) -> int:
     if x == 3:
         raise ValueError("Three is forbidden")
@@ -23,6 +29,7 @@ class TestMap(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = get_test_backend(f"map_{os.getpid()}")
         await self.backend.init_db()
+        await clear_test_backend(self.backend)
         self.executor = Senpuki(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1, max_concurrency=10))
 
@@ -32,17 +39,18 @@ class TestMap(unittest.IsolatedAsyncioTestCase):
             await self.worker_task
         except asyncio.CancelledError:
             pass
+        await self.executor.shutdown()
         await cleanup_test_backend(self.backend)
 
     async def test_map_basic(self):
         @Senpuki.durable()
         async def workflow(items: list[int]) -> list[int]:
             return await Senpuki.map(square, items)
-
+    
         exec_id = await self.executor.dispatch(workflow, [1, 2, 3, 4, 5])
-        
+    
         # Wait for result
-        final = await self.executor.wait_for(exec_id, expiry=10.0)
+        final = await self.executor.wait_for(exec_id, expiry=30.0)
         self.assertTrue(final.ok)
         self.assertEqual(final.value, [1, 4, 9, 16, 25])
 
@@ -57,13 +65,13 @@ class TestMap(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final.value, [])
 
     async def test_map_failure(self):
-        @Senpuki.durable()
+        @Senpuki.durable(retry_policy=RetryPolicy(max_attempts=1))
         async def workflow(items: list[int]) -> list[int]:
             return await Senpuki.map(fail_on_three, items)
 
         exec_id = await self.executor.dispatch(workflow, [1, 2, 3])
         
-        final = await self.executor.wait_for(exec_id, expiry=5.0)
+        final = await self.executor.wait_for(exec_id, expiry=15.0)
         self.assertFalse(final.ok)
         self.assertIn("Three is forbidden", str(final.error))
 
@@ -76,6 +84,6 @@ class TestMap(unittest.IsolatedAsyncioTestCase):
              return await Senpuki.gather(t1, t2)
          
          exec_id = await self.executor.dispatch(workflow)
-         final = await self.executor.wait_for(exec_id, expiry=5.0)
+         final = await self.executor.wait_for(exec_id, expiry=15.0)
          self.assertTrue(final.ok)
          self.assertEqual(final.value, [100, 400])

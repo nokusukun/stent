@@ -97,6 +97,10 @@ class Senpuki:
             
         self.notification_backend = notification_backend
         
+        # Tracks background asyncio.Task instances spawned by this executor so their
+        # lifecycle can be managed (for example, awaiting or cleanup on shutdown).
+        self.background_tasks: set[asyncio.Task[Any]] = set()
+        
         self._register_builtin_tasks()
         self._patch_asyncio_sleep()
 
@@ -809,8 +813,11 @@ class Senpuki:
                     )
                     
                     if task:
+                        # logger.info(f"Worker claimed task {task.step_name} ({task.id})")
                         # Run in background
-                        asyncio.create_task(self._handle_task(task, worker_id, lease_duration, sem))
+                        bg_task = asyncio.create_task(self._handle_task(task, worker_id, lease_duration, sem))
+                        self.background_tasks.add(bg_task)
+                        bg_task.add_done_callback(self.background_tasks.discard)
                     else:
                         sem.release()
                         await _original_sleep(poll_interval)
@@ -828,6 +835,14 @@ class Senpuki:
                     await cleanup_task
                 except asyncio.CancelledError:
                     pass
+
+    async def shutdown(self):
+        """
+        Gracefully shuts down the executor, waiting for pending background tasks.
+        """
+        if self.background_tasks:
+            logger.info(f"Waiting for {len(self.background_tasks)} background tasks to complete...")
+            await asyncio.gather(*self.background_tasks, return_exceptions=True)
 
     async def _cleanup_loop(self, retention: timedelta, interval: float):
         logger.info(f"Starting cleanup loop. Retention: {retention}, Interval: {interval}s")
@@ -854,12 +869,14 @@ class Senpuki:
         lease_duration: timedelta, 
         sem: asyncio.Semaphore
     ):
+        # logger.info(f"DEBUG: Starting _handle_task for {task.step_name} ({task.id})")
         token_exec = current_execution_id.set(task.execution_id)
         token_task = current_task_id.set(task.id)
         token_executor = current_executor.set(self)
         token_sem = current_worker_semaphore.set(sem)
         token_permit = current_permit_holder.set(PermitHolder(sem))
         
+        execution = None
         try:
             # Check execution state or expiry
             execution = await self.backend.get_execution(task.execution_id)
@@ -918,6 +935,7 @@ class Senpuki:
             ))
 
             # Execute
+            # logger.info(f"Executing {task.step_name} with expiry {execution.expiry_at}")
             if execution.expiry_at:
                 remaining = (execution.expiry_at - datetime.now()).total_seconds()
                 if remaining <= 0:
@@ -945,7 +963,9 @@ class Senpuki:
                     ))
                     return
             else:
+                # logger.info(f"Calling function {task.step_name}")
                 result_val = await meta.fn(*args, **kwargs)
+                # logger.info(f"Function {task.step_name} returned {result_val}")
             
             # Success
             task.result = self.serializer.dumps(result_val)
@@ -1024,6 +1044,7 @@ class Senpuki:
             current_executor.reset(token_executor)
             current_worker_semaphore.reset(token_sem)
             current_permit_holder.reset(token_permit)
+            # logger.info(f"DEBUG: Finished _handle_task for {task.step_name} ({task.id})")
 
 # Context var for executor instance
 current_executor: ContextVar[Optional[Senpuki]] = ContextVar("senpuki_executor", default=None)

@@ -24,6 +24,7 @@ async def fetch_url(url: str) -> str:
 @Senpuki.durable()
 async def analyze_sentiment(content: str) -> dict:
     """Simulates CPU-intensive analysis."""
+    print(f"[Analysis] Analyzing sentiment: {content}...")
     await asyncio.sleep(0.1) # Simulate CPU work
     return {
         "score": random.randint(0, 100),

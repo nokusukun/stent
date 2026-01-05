@@ -6,6 +6,7 @@ import senpuki # import the package to access senpuki.sleep
 from senpuki.executor import Senpuki, Backends
 from senpuki.registry import registry
 from senpuki.utils.time import parse_duration
+from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 # Define some tasks
 @Senpuki.durable()
@@ -19,14 +20,14 @@ async def sleeping_workflow():
 
 class TestScheduling(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.db_path = f"test_scheduling_{os.getpid()}.sqlite"
-        self.backend = Backends.SQLiteBackend(self.db_path)
+        self.backend = get_test_backend(f"scheduling_{os.getpid()}")
         await self.backend.init_db()
+        await clear_test_backend(self.backend)
         self.senpuki = Senpuki(backend=self.backend)
 
     async def asyncTearDown(self):
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        await self.senpuki.shutdown()
+        await cleanup_test_backend(self.backend)
 
     async def test_parse_duration_extensions(self):
         self.assertEqual(parse_duration("2d8h"), timedelta(days=2, hours=8))
@@ -57,11 +58,12 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
             task = tasks[0]
             self.assertEqual(task.state, "pending")
             
-            # Wait another 1.5 seconds (total 2.5s)
-            await asyncio.sleep(1.5)
+            # Wait another 2.5 seconds (total 3.5s) to be safe with remote DB
+            await asyncio.sleep(2.5)
             
             # Should be done now
-            result = await self.senpuki.result_of(exec_id)
+            # Use wait_for to be robust
+            result = await self.senpuki.wait_for(exec_id, expiry=5.0)
             self.assertEqual(result.or_raise(), 20)
             
         finally:
@@ -81,7 +83,7 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
         worker_task = asyncio.create_task(self.senpuki.serve(poll_interval=0.1))
         
         try:
-            result = await self.senpuki.wait_for(exec_id, expiry=5.0)
+            result = await self.senpuki.wait_for(exec_id, expiry=10.0) # Increased expiry
             duration = (datetime.now() - start).total_seconds()
             
             self.assertEqual(result.or_raise(), "done")

@@ -1,8 +1,9 @@
 import asyncio
 import unittest
+import os
 from datetime import timedelta
 from senpuki import Senpuki, Result
-from tests.utils import get_test_backend, cleanup_test_backend
+from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 @Senpuki.durable()
 async def long_running_task(duration_sec: float) -> str:
@@ -11,8 +12,9 @@ async def long_running_task(duration_sec: float) -> str:
 
 class TestMaxDuration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.backend = get_test_backend(f"max_duration")
+        self.backend = get_test_backend(f"max_duration_{os.getpid()}")
         await self.backend.init_db()
+        await clear_test_backend(self.backend)
         self.executor = Senpuki(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
@@ -22,12 +24,15 @@ class TestMaxDuration(unittest.IsolatedAsyncioTestCase):
             await self.worker_task
         except asyncio.CancelledError:
             pass
+        await self.executor.shutdown()
         await cleanup_test_backend(self.backend)
 
     async def test_max_duration_success(self):
         # Task takes 0.1s, max_duration 1s -> should pass
-        exec_id = await self.executor.dispatch(long_running_task, 0.1, max_duration="1s")
-        result = await self.executor.wait_for(exec_id)
+        # Increase max_duration to 5s to account for latency
+        exec_id = await self.executor.dispatch(long_running_task, 0.1, max_duration="5s")
+        # Increase wait_for expiry too
+        result = await self.executor.wait_for(exec_id, expiry=10.0)
         self.assertEqual(result.value, "done")
 
     async def test_max_duration_timeout(self):

@@ -4,7 +4,7 @@ import os
 import logging
 from senpuki import Senpuki, Result, RetryPolicy
 from senpuki.registry import registry
-from tests.utils import get_test_backend, cleanup_test_backend
+from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -66,6 +66,7 @@ class TestScenarios(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = get_test_backend(f"scenarios_{os.getpid()}")
         await self.backend.init_db()
+        await clear_test_backend(self.backend)
         self.executor = Senpuki(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
         SENT_EMAILS.clear()
@@ -76,6 +77,7 @@ class TestScenarios(unittest.IsolatedAsyncioTestCase):
             await self.worker_task
         except asyncio.CancelledError:
             pass
+        await self.executor.shutdown()
         await cleanup_test_backend(self.backend)
 
     async def test_llm_email_scenario(self):
