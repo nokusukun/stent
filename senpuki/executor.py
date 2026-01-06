@@ -487,9 +487,9 @@ class Senpuki:
                             raise Exception(str(err))
                         raise Exception("Task failed")
                     
-                    res = executor.serializer.loads(completed.result) #  pyrefly: ignore[missing-attribute]
+                    res = executor.serializer.loads(completed.result) if completed.result is not None else None #  pyrefly: ignore[missing-attribute]
                     # Store cache/idempotency
-                    if item.idempotency_key:
+                    if item.idempotency_key and completed.result is not None:
                         if meta.cached: #  pyrefly: ignore[missing-attribute]
                             await executor.backend.set_cached_result(item.idempotency_key, completed.result) #  pyrefly: ignore[missing-attribute]
                         if meta.idempotent: #  pyrefly: ignore[missing-attribute]
@@ -671,8 +671,8 @@ class Senpuki:
         )
         
         create_with_root = getattr(self.backend, "create_execution_with_root_task", None)
-        if callable(create_with_root):
-            await create_with_root(record, task)
+        if create_with_root is not None and callable(create_with_root):
+            await create_with_root(record, task)  # type: ignore[misc]
         else:
             await self.backend.create_execution(record)
             await self.backend.create_task(task)
@@ -757,11 +757,11 @@ class Senpuki:
         existing_task = await self.backend.get_task(task_id)
         if existing_task:
             if existing_task.state == "completed":
-                return self.serializer.loads(existing_task.result) # pyrefly: ignore
+                return self.serializer.loads(existing_task.result) if existing_task.result is not None else None
             else:
                 # Still pending, wait for it
                 completed = await self._wait_for_task(task_id)
-                return self.serializer.loads(completed.result) # pyrefly: ignore
+                return self.serializer.loads(completed.result) if completed.result is not None else None
                 
         # 2. Check signal buffer
         signal = await self.backend.get_signal(exec_id, name)
@@ -828,7 +828,7 @@ class Senpuki:
              s.consumed_at = datetime.now()
              await self.backend.create_signal(s)
              
-        return self.serializer.loads(completed.result) # pyrefly: ignore
+        return self.serializer.loads(completed.result) if completed.result is not None else None
 
     async def _schedule_activity(
         self, 

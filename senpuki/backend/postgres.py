@@ -1,13 +1,18 @@
 import asyncpg
+import asyncpg.pool
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Union
 from senpuki.backend.base import Backend
 from senpuki.core import ExecutionRecord, TaskRecord, ExecutionProgress, RetryPolicy, SignalRecord, DeadLetterRecord
 from senpuki.backend.utils import task_record_to_json, task_record_from_json
 
 logger = logging.getLogger(__name__)
+
+# Type alias for connection objects (both direct connections and pool proxies)
+# Using Any because PoolConnectionProxy and Connection both have execute() but type checker doesn't know
+_Conn = Any
 
 class PostgresBackend(Backend):
     def __init__(self, dsn: str, min_pool_size: int = 2, max_pool_size: int = 10):
@@ -159,7 +164,7 @@ class PostgresBackend(Backend):
             record.queue,
         )
 
-    async def _insert_execution(self, conn: asyncpg.Connection, record: ExecutionRecord) -> None:
+    async def _insert_execution(self, conn: _Conn, record: ExecutionRecord) -> None:
         await conn.execute(
             "INSERT INTO executions (id, root_function, state, args, kwargs, result, error, retries, created_at, started_at, completed_at, expiry_at, tags, priority, queue) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
             *self._execution_row_values(record),
@@ -201,7 +206,7 @@ class PostgresBackend(Backend):
             task.scheduled_for,
         )
 
-    async def _insert_task(self, conn: asyncpg.Connection, task: TaskRecord) -> None:
+    async def _insert_task(self, conn: _Conn, task: TaskRecord) -> None:
         await conn.execute(
             "INSERT INTO tasks (id, execution_id, step_name, kind, parent_task_id, state, args, kwargs, result, error, retries, created_at, started_at, completed_at, worker_id, lease_expires_at, tags, priority, queue, idempotency_key, retry_policy, scheduled_for) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)",
             *self._task_row_values(task),
