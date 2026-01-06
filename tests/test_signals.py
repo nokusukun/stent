@@ -59,6 +59,7 @@ async def test_signal_basic():
             await worker_task
         except asyncio.CancelledError:
             pass
+        await backend.close()
         if os.path.exists(db_path):
             os.remove(db_path)
 
@@ -91,6 +92,7 @@ async def test_signal_buffered():
         try:
             await worker_task
         except: pass
+        await backend.close()
         if os.path.exists(db_path):
             os.remove(db_path)
 
@@ -123,5 +125,6 @@ async def test_multi_signals():
         try:
             await worker_task
         except: pass
+        await backend.close()
         if os.path.exists(db_path):
             os.remove(db_path)

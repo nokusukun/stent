@@ -10,13 +10,38 @@ from senpuki.backend.utils import task_record_to_json, task_record_from_json
 logger = logging.getLogger(__name__)
 
 class PostgresBackend(Backend):
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, min_pool_size: int = 2, max_pool_size: int = 10):
+        """
+        Initialize Postgres backend.
+        
+        Args:
+            dsn: PostgreSQL connection string
+            min_pool_size: Minimum connections in pool (default 2)
+            max_pool_size: Maximum connections in pool (default 10)
+        """
         self.dsn = dsn
+        self._min_pool_size = min_pool_size
+        self._max_pool_size = max_pool_size
         self.pool: Optional[asyncpg.Pool] = None
+        self._closed = False
+
+    async def close(self) -> None:
+        """Close the connection pool and release resources."""
+        self._closed = True
+        if self.pool is not None:
+            await self.pool.close()
+            self.pool = None
+            logger.info("Postgres connection pool closed")
 
     async def init_db(self):
+        if self._closed:
+            raise RuntimeError("PostgresBackend has been closed")
         if not self.pool:
-             self.pool = await asyncpg.create_pool(self.dsn)
+            self.pool = await asyncpg.create_pool(
+                self.dsn,
+                min_size=self._min_pool_size,
+                max_size=self._max_pool_size,
+            )
         
         assert self.pool is not None
         
@@ -528,6 +553,20 @@ class PostgresBackend(Backend):
                 except (IndexError, ValueError):
                     count = 0
                 return count
+
+    async def cleanup_dead_letters(self, older_than: datetime) -> int:
+        """Remove dead letter records older than the specified datetime."""
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            tag = await conn.execute(
+                "DELETE FROM dead_tasks WHERE moved_at < $1",
+                older_than,
+            )
+            try:
+                count = int(tag.split(" ")[1])
+            except (IndexError, ValueError):
+                count = 0
+            return count
 
     async def create_signal(self, signal: SignalRecord) -> None:
         assert self.pool is not None

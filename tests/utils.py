@@ -32,6 +32,10 @@ async def clear_test_backend(backend):
                 await conn.execute("TRUNCATE TABLE executions, execution_progress, tasks, dead_tasks, cache, idempotency CASCADE")
 
 async def cleanup_test_backend(backend):
+    # First close the backend connection
+    if hasattr(backend, "close"):
+        await backend.close()
+    
     if hasattr(backend, "db_path"):
         if not os.path.exists(backend.db_path):
             return
