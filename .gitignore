@@ -28,7 +28,17 @@ Thumbs.db
 
 # Senpuki specific
 *.sqlite*
+*.db
+*.db-shm
+*.db-wal
 /tmp/*
+
+# Build artifacts
+dist/
+build/
+
+# Misc
+nul
 
 # Gemini temporary files
 /.gemini/
