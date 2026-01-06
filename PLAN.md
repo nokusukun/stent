@@ -129,9 +129,9 @@ except ImportError:
 **Files**: `senpuki/utils/serialization.py`
 
 **Tasks**:
-- [ ] Include traceback in JSON-serialized exceptions
-- [ ] Preserve custom exception attributes where possible
-- [ ] Add `__traceback__` field to serialized form
+- [*] Include traceback in JSON-serialized exceptions
+- [*] Preserve custom exception attributes where possible
+- [*] Add `__traceback__` field to serialized form
 
 **Target format**:
 ```python
@@ -152,10 +152,10 @@ except ImportError:
 **Files**: `senpuki/utils/serialization.py`, `senpuki/backend/utils.py`
 
 **Tasks**:
-- [ ] Serialize `retry_for` as list of class names
-- [ ] Add registry of known exception classes for deserialization
-- [ ] Fall back to `(Exception,)` for unknown classes
-- [ ] Document limitation for custom exceptions
+- [*] Serialize `retry_for` as list of class names
+- [*] Add registry of known exception classes for deserialization
+- [*] Fall back to `(Exception,)` for unknown classes
+- [*] Document limitation for custom exceptions
 
 **Estimated**: 0.5 days
 

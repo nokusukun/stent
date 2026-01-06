@@ -41,18 +41,35 @@ def _retry_policy_to_dict(policy: RetryPolicy | None) -> dict[str, Any] | None:
         "initial_delay": policy.initial_delay,
         "max_delay": policy.max_delay,
         "jitter": policy.jitter,
+        "retry_for": [exc.__name__ for exc in policy.retry_for],
     }
 
 
 def _retry_policy_from_dict(data: dict[str, Any] | None) -> RetryPolicy | None:
     if not data:
         return None
+    
+    # Import here to avoid circular imports
+    from senpuki.utils.serialization import get_exception_class
+    
+    # Deserialize retry_for exception classes
+    retry_for_names = data.get("retry_for", ["Exception"])
+    retry_for_classes: list[type[BaseException]] = []
+    for name in retry_for_names:
+        exc_class = get_exception_class(name)
+        if exc_class not in retry_for_classes:
+            retry_for_classes.append(exc_class)
+    
+    if not retry_for_classes:
+        retry_for_classes = [Exception]
+    
     return RetryPolicy(
         max_attempts=data.get("max_attempts", 3),
         backoff_factor=data.get("backoff_factor", 2.0),
         initial_delay=data.get("initial_delay", 1.0),
         max_delay=data.get("max_delay", 60.0),
         jitter=data.get("jitter", 0.1),
+        retry_for=tuple(retry_for_classes),
     )
 
 
