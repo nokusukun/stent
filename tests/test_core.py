@@ -1,9 +1,9 @@
 import unittest
 import json
-from datetime import timedelta
+from datetime import timedelta, timezone
 from senpuki.core import Result, RetryPolicy, compute_retry_delay
 from senpuki.utils.serialization import JsonSerializer
-from senpuki.utils.time import parse_duration
+from senpuki.utils.time import parse_duration, now_utc
 
 class TestCore(unittest.TestCase):
     def test_result_serialization(self):
@@ -51,3 +51,25 @@ class TestCore(unittest.TestCase):
         self.assertEqual(parse_duration("30s"), timedelta(seconds=30))
         self.assertEqual(parse_duration("5m"), timedelta(minutes=5))
         self.assertEqual(parse_duration("1h"), timedelta(hours=1))
+        self.assertEqual(parse_duration("1h30m"), timedelta(hours=1, minutes=30))
+        self.assertEqual(parse_duration("2d8h"), timedelta(days=2, hours=8))
+        self.assertEqual(parse_duration({"minutes": 5}), timedelta(minutes=5))
+        self.assertEqual(parse_duration(timedelta(seconds=12)), timedelta(seconds=12))
+
+    def test_parse_duration_rejects_invalid_formats(self):
+        invalid_values = [
+            "",
+            "10x",
+            "10sfoo",
+            "foo10s",
+            "1h 30m",
+        ]
+
+        for value in invalid_values:
+            with self.assertRaises(ValueError):
+                parse_duration(value)
+
+    def test_now_utc_is_timezone_aware_utc(self):
+        current = now_utc()
+        self.assertIsNotNone(current.tzinfo)
+        self.assertEqual(current.tzinfo, timezone.utc)
