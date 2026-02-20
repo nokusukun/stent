@@ -23,7 +23,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from senpuki import Senpuki, ExecutionState
 from senpuki.core import TaskRecord, DeadLetterRecord
@@ -51,8 +51,12 @@ if not sys.stdout.isatty() or (os.name == "nt" and not os.environ.get("ANSICON")
     try:
         # Try enabling ANSI on Windows 10+
         import ctypes
-        kernel32 = ctypes.windll.kernel32
-        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+        windll = cast(Any, getattr(ctypes, "windll", None))
+        if windll is not None:
+            kernel32 = windll.kernel32
+            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+        else:
+            Colors.disable()
     except Exception:
         Colors.disable()
 
@@ -157,6 +161,19 @@ async def show_execution(executor: Senpuki, args):
     print(f"  Priority:   {state.priority}")
     if state.tags:
         print(f"  Tags:       {', '.join(state.tags)}")
+
+    if state.counters:
+        print(f"\n{Colors.BOLD}Counters{Colors.RESET}")
+        for key in sorted(state.counters.keys()):
+            print(f"  {key}: {state.counters[key]}")
+
+    if state.custom_state:
+        print(f"\n{Colors.BOLD}Custom State{Colors.RESET}")
+        for key in sorted(state.custom_state.keys()):
+            value_str = str(state.custom_state[key])
+            if len(value_str) > 200:
+                value_str = value_str[:200] + "..."
+            print(f"  {key}: {value_str}")
     
     # Timing
     print(f"\n{Colors.BOLD}Timing{Colors.RESET}")
@@ -283,15 +300,14 @@ async def show_task(executor: Senpuki, args):
 async def show_stats(executor: Senpuki, args):
     """Show queue and execution statistics."""
     # Count executions by state
-    exec_states = ["pending", "running", "completed", "failed", "timed_out"]
-    exec_counts = {}
+    exec_states = ["pending", "running", "completed", "failed", "timed_out", "cancelled"]
+    exec_counts: dict[str, int] = {}
     for state in exec_states:
-        records = await executor.backend.list_executions(limit=10000, state=state)
-        exec_counts[state] = len(records)
+        exec_counts[state] = await executor.backend.count_executions(state=state)
     
     # Count tasks by state
     task_states = ["pending", "running", "completed", "failed"]
-    task_counts = {}
+    task_counts: dict[str, int] = {}
     for state in task_states:
         task_counts[state] = await executor.backend.count_tasks(state=state)
     
@@ -303,8 +319,7 @@ async def show_stats(executor: Senpuki, args):
         queues[q] = queues.get(q, 0) + 1
     
     # DLQ count
-    dlq_records = await executor.backend.list_dead_tasks(limit=1000)
-    dlq_count = len(dlq_records)
+    dlq_count = await executor.backend.count_dead_tasks()
     
     # Running activities
     running_tasks = await executor.get_running_activities()
@@ -531,7 +546,7 @@ async def _watch_simple(executor: Senpuki, args):
             # Quick stats
             pending = await executor.backend.count_tasks(state="pending")
             running = await executor.backend.count_tasks(state="running")
-            dlq = len(await executor.backend.list_dead_tasks(limit=1000))
+            dlq = await executor.backend.count_dead_tasks()
             
             print(f"\nPending: {Colors.YELLOW}{pending}{Colors.RESET}  "
                   f"Running: {Colors.BLUE}{running}{Colors.RESET}  "
@@ -579,7 +594,7 @@ async def _watch_rich(executor: Senpuki, args):
         running = await executor.backend.count_tasks(state="running")
         completed = await executor.backend.count_tasks(state="completed")
         failed = await executor.backend.count_tasks(state="failed")
-        dlq = len(await executor.backend.list_dead_tasks(limit=1000))
+        dlq = await executor.backend.count_dead_tasks()
         
         stats_table = Table(show_header=False, box=None)
         stats_table.add_row("Pending", f"[yellow]{pending}[/]")
@@ -752,45 +767,49 @@ Examples:
         backend = Senpuki.backends.PostgresBackend(args.db)
     else:
         backend = Senpuki.backends.SQLiteBackend(args.db)
-    
+
+    await backend.init_db()
     executor = Senpuki(backend=backend)
     
     # Handle --all default for cleanup
     if args.command == "cleanup" and not args.executions and not args.dlq:
         args.all = True
     
-    # Dispatch to command handlers
-    result = 0
-    if args.command == "list":
-        await list_executions(executor, args)
-    elif args.command == "show":
-        result = await show_execution(executor, args) or 0
-    elif args.command == "tasks":
-        if args.tasks_command == "list":
-            await list_tasks(executor, args)
-        elif args.tasks_command == "show":
-            result = await show_task(executor, args) or 0
-    elif args.command == "stats":
-        await show_stats(executor, args)
-    elif args.command == "dlq":
-        if args.dlq_command == "list":
-            await dlq_list(executor, args)
-        elif args.dlq_command == "show":
-            result = await dlq_show(executor, args) or 0
-        elif args.dlq_command == "replay":
-            result = await dlq_replay(executor, args) or 0
-        elif args.dlq_command == "discard":
-            result = await dlq_discard(executor, args) or 0
-        elif args.dlq_command == "replay-all":
-            result = await dlq_replay_all(executor, args) or 0
-    elif args.command == "cleanup":
-        await cleanup(executor, args)
-    elif args.command == "signal":
-        result = await send_signal(executor, args) or 0
-    elif args.command == "watch":
-        await watch(executor, args)
-    
-    return result
+    try:
+        # Dispatch to command handlers
+        result = 0
+        if args.command == "list":
+            await list_executions(executor, args)
+        elif args.command == "show":
+            result = await show_execution(executor, args) or 0
+        elif args.command == "tasks":
+            if args.tasks_command == "list":
+                await list_tasks(executor, args)
+            elif args.tasks_command == "show":
+                result = await show_task(executor, args) or 0
+        elif args.command == "stats":
+            await show_stats(executor, args)
+        elif args.command == "dlq":
+            if args.dlq_command == "list":
+                await dlq_list(executor, args)
+            elif args.dlq_command == "show":
+                result = await dlq_show(executor, args) or 0
+            elif args.dlq_command == "replay":
+                result = await dlq_replay(executor, args) or 0
+            elif args.dlq_command == "discard":
+                result = await dlq_discard(executor, args) or 0
+            elif args.dlq_command == "replay-all":
+                result = await dlq_replay_all(executor, args) or 0
+        elif args.command == "cleanup":
+            await cleanup(executor, args)
+        elif args.command == "signal":
+            result = await send_signal(executor, args) or 0
+        elif args.command == "watch":
+            await watch(executor, args)
+
+        return result
+    finally:
+        await backend.close()
 
 
 def main():
