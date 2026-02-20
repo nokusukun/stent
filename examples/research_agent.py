@@ -354,9 +354,9 @@ async def process_sources_batch(
     results = await asyncio.gather(*summary_tasks, return_exceptions=True)
     
     # Filter out failures
-    summaries = []
+    summaries: list[dict] = []
     for result in results:
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             logger.warning(f"Failed to summarize source: {result}")
         else:
             summaries.append(result)
