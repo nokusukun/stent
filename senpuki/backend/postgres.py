@@ -6,7 +6,21 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Any, Union
 from senpuki.backend.base import Backend
 from senpuki.core import ExecutionRecord, TaskRecord, ExecutionProgress, RetryPolicy, SignalRecord, DeadLetterRecord
-from senpuki.backend.utils import task_record_to_json, task_record_from_json
+from senpuki.backend.utils import (
+    build_filtered_count_query,
+    build_filtered_list_query,
+    dollar_placeholder,
+    execution_row_values,
+    row_to_dead_letter,
+    row_to_execution,
+    row_to_progress,
+    row_to_signal,
+    row_to_task,
+    retry_policy_from_json,
+    retry_policy_to_json,
+    task_record_to_json,
+    task_row_values,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,25 +158,25 @@ class PostgresBackend(Backend):
                     value BYTEA
                 )
             """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS execution_counters (
+                    execution_id TEXT,
+                    name TEXT,
+                    value DOUBLE PRECISION NOT NULL,
+                    PRIMARY KEY (execution_id, name)
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS execution_state (
+                    execution_id TEXT,
+                    key TEXT,
+                    value BYTEA,
+                    PRIMARY KEY (execution_id, key)
+                )
+            """)
 
     def _execution_row_values(self, record: ExecutionRecord) -> tuple[Any, ...]:
-        return (
-            record.id,
-            record.root_function,
-            record.state,
-            record.args,
-            record.kwargs,
-            record.result,
-            record.error,
-            record.retries,
-            record.created_at,
-            record.started_at,
-            record.completed_at,
-            record.expiry_at,
-            json.dumps(record.tags),
-            record.priority,
-            record.queue,
-        )
+        return execution_row_values(record)
 
     async def _insert_execution(self, conn: _Conn, record: ExecutionRecord) -> None:
         await conn.execute(
@@ -181,30 +195,7 @@ class PostgresBackend(Backend):
             )
 
     def _task_row_values(self, task: TaskRecord) -> tuple[Any, ...]:
-        return (
-            task.id,
-            task.execution_id,
-            task.step_name,
-            task.kind,
-            task.parent_task_id,
-            task.state,
-            task.args,
-            task.kwargs,
-            task.result,
-            task.error,
-            task.retries,
-            task.created_at,
-            task.started_at,
-            task.completed_at,
-            task.worker_id,
-            task.lease_expires_at,
-            json.dumps(task.tags),
-            task.priority,
-            task.queue,
-            task.idempotency_key,
-            self._policy_to_json(task.retry_policy),
-            task.scheduled_for,
-        )
+        return task_row_values(task)
 
     async def _insert_task(self, conn: _Conn, task: TaskRecord) -> None:
         await conn.execute(
@@ -257,20 +248,32 @@ class PostgresBackend(Backend):
     async def list_executions(self, limit: int = 10, offset: int = 0, state: str | None = None) -> List[ExecutionRecord]:
         assert self.pool is not None
         async with self.pool.acquire() as conn:
-            query = "SELECT * FROM executions"
-            params: List[Any] = []
-            if state:
-                query += " WHERE state = $1"
-                params.append(state)
-            
-            query += f" ORDER BY created_at DESC LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
-            params.extend([limit, offset])
+            query, params = build_filtered_list_query(
+                table="executions",
+                filters=[("state", state)],
+                order_by="created_at DESC",
+                limit=limit,
+                offset=offset,
+                placeholder=dollar_placeholder,
+            )
             
             rows = await conn.fetch(query, *params)
             results = []
             for row in rows:
                 results.append(self._row_to_execution(row, progress=[]))
             return results
+
+    async def count_executions(self, state: str | None = None) -> int:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            query, params = build_filtered_count_query(
+                table="executions",
+                filters=[("state", state)],
+                placeholder=dollar_placeholder,
+            )
+
+            val = await conn.fetchval(query, *params)
+            return val if val else 0
 
     async def create_task(self, task: TaskRecord) -> None:
         await self.create_tasks([task])
@@ -288,14 +291,11 @@ class PostgresBackend(Backend):
     async def count_tasks(self, queue: str | None = None, state: str | None = None) -> int:
         assert self.pool is not None
         async with self.pool.acquire() as conn:
-            query = "SELECT COUNT(*) FROM tasks WHERE 1=1"
-            params: List[Any] = []
-            if queue:
-                query += f" AND queue = ${len(params) + 1}"
-                params.append(queue)
-            if state:
-                query += f" AND state = ${len(params) + 1}"
-                params.append(state)
+            query, params = build_filtered_count_query(
+                table="tasks",
+                filters=[("queue", queue), ("state", state)],
+                placeholder=dollar_placeholder,
+            )
             
             val = await conn.fetchval(query, *params)
             return val if val else 0
@@ -314,24 +314,24 @@ class PostgresBackend(Backend):
             await conn.execute("""
                 UPDATE tasks SET
                     state=$1, result=$2, error=$3, retries=$4, started_at=$5, completed_at=$6,
-                    worker_id=$7, lease_expires_at=$8
-                WHERE id=$9
+                    worker_id=$7, lease_expires_at=$8, scheduled_for=$9
+                WHERE id=$10
             """, 
                 task.state, task.result, task.error, task.retries, task.started_at,
-                task.completed_at, task.worker_id, task.lease_expires_at, task.id
+                task.completed_at, task.worker_id, task.lease_expires_at, task.scheduled_for, task.id
             )
 
     async def list_tasks(self, limit: int = 10, offset: int = 0, state: str | None = None) -> List[TaskRecord]:
         assert self.pool is not None
         async with self.pool.acquire() as conn:
-            query = "SELECT * FROM tasks"
-            params: List[Any] = []
-            if state:
-                query += " WHERE state = $1"
-                params.append(state)
-            
-            query += f" ORDER BY created_at DESC LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}"
-            params.extend([limit, offset])
+            query, params = build_filtered_list_query(
+                table="tasks",
+                filters=[("state", state)],
+                order_by="created_at DESC",
+                limit=limit,
+                offset=offset,
+                placeholder=dollar_placeholder,
+            )
             
             rows = await conn.fetch(query, *params)
             return [self._row_to_task(row) for row in rows]
@@ -352,6 +352,8 @@ class PostgresBackend(Backend):
             lease_duration = timedelta(minutes=5)
             
         expires_at = now + lease_duration
+        worker_tags_set = set(tags or [])
+        should_filter_by_tags = bool(tags)
         
         # Helper for queues condition
         queue_clause = ""
@@ -391,6 +393,11 @@ class PostgresBackend(Backend):
                     return None
                 
                 for row in rows:
+                    if should_filter_by_tags:
+                        task_tags = json.loads(row["tags"]) if row["tags"] else []
+                        if task_tags and worker_tags_set.isdisjoint(task_tags):
+                            continue
+
                     step_name = row["step_name"]
                     limit = concurrency_limits.get(step_name) if concurrency_limits else None
                     
@@ -506,8 +513,7 @@ class PostgresBackend(Backend):
             )
 
     def _row_to_dead_letter(self, row: Any) -> DeadLetterRecord:
-        task = task_record_from_json(row["data"])
-        return DeadLetterRecord(task=task, reason=row["reason"], moved_at=row["moved_at"])
+        return row_to_dead_letter(row)
 
     async def list_dead_tasks(self, limit: int = 50) -> List[DeadLetterRecord]:
         assert self.pool is not None
@@ -517,6 +523,12 @@ class PostgresBackend(Backend):
                 limit,
             )
             return [self._row_to_dead_letter(row) for row in rows]
+
+    async def count_dead_tasks(self) -> int:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            val = await conn.fetchval("SELECT COUNT(*) FROM dead_tasks")
+            return val if val else 0
 
     async def get_dead_task(self, task_id: str) -> DeadLetterRecord | None:
         assert self.pool is not None
@@ -549,6 +561,8 @@ class PostgresBackend(Backend):
                 await conn.execute(f"DELETE FROM tasks WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", older_than)
                 await conn.execute(f"DELETE FROM execution_progress WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", older_than)
                 await conn.execute(f"DELETE FROM signals WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", older_than)
+                await conn.execute(f"DELETE FROM execution_counters WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", older_than)
+                await conn.execute(f"DELETE FROM execution_state WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", older_than)
                 
                 # Delete executions
                 tag = await conn.execute(f"DELETE FROM executions WHERE {where_clause}", older_than)
@@ -587,88 +601,98 @@ class PostgresBackend(Backend):
             row = await conn.fetchrow("SELECT * FROM signals WHERE execution_id = $1 AND name = $2", execution_id, name)
             if not row:
                 return None
-            return SignalRecord(
-                execution_id=row["execution_id"],
-                name=row["name"],
-                payload=row["payload"],
-                created_at=row["created_at"],
-                consumed=row["consumed"],
-                consumed_at=row["consumed_at"]
+            return row_to_signal(row)
+
+    async def ensure_execution_counters(self, execution_id: str, counters: dict[str, int | float]) -> None:
+        if not counters:
+            return
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            rows = [(execution_id, name, float(value)) for name, value in counters.items()]
+            await conn.executemany(
+                """
+                INSERT INTO execution_counters (execution_id, name, value)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (execution_id, name) DO NOTHING
+                """,
+                rows,
             )
+
+    async def increment_execution_counter(self, execution_id: str, name: str, amount: int | float) -> float:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            value = await conn.fetchval(
+                """
+                INSERT INTO execution_counters (execution_id, name, value)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (execution_id, name) DO UPDATE SET value = execution_counters.value + EXCLUDED.value
+                RETURNING value
+                """,
+                execution_id,
+                name,
+                float(amount),
+            )
+            return float(value or 0.0)
+
+    async def get_execution_counters(self, execution_id: str) -> dict[str, int | float]:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT name, value FROM execution_counters WHERE execution_id = $1",
+                execution_id,
+            )
+            return {row["name"]: row["value"] for row in rows}
+
+    async def ensure_execution_state_values(self, execution_id: str, values: dict[str, bytes]) -> None:
+        if not values:
+            return
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            rows = [(execution_id, key, value) for key, value in values.items()]
+            await conn.executemany(
+                """
+                INSERT INTO execution_state (execution_id, key, value)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (execution_id, key) DO NOTHING
+                """,
+                rows,
+            )
+
+    async def set_execution_state_value(self, execution_id: str, key: str, value: bytes) -> None:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO execution_state (execution_id, key, value)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (execution_id, key) DO UPDATE SET value = EXCLUDED.value
+                """,
+                execution_id,
+                key,
+                value,
+            )
+
+    async def get_execution_state_values(self, execution_id: str) -> dict[str, bytes]:
+        assert self.pool is not None
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT key, value FROM execution_state WHERE execution_id = $1",
+                execution_id,
+            )
+            return {row["key"]: row["value"] for row in rows}
 
 
     def _policy_to_json(self, p: RetryPolicy | None) -> str:
-        if not p:
-            return "{}"
-        return json.dumps({
-            "max_attempts": p.max_attempts,
-            "backoff_factor": p.backoff_factor,
-            "initial_delay": p.initial_delay,
-            "max_delay": p.max_delay,
-            "jitter": p.jitter
-        })
+        return retry_policy_to_json(p)
 
     def _json_to_policy(self, s: str) -> RetryPolicy:
-        d = json.loads(s)
-        return RetryPolicy(
-            max_attempts=d.get("max_attempts", 3),
-            backoff_factor=d.get("backoff_factor", 2.0),
-            initial_delay=d.get("initial_delay", 1.0),
-            max_delay=d.get("max_delay", 60.0),
-            jitter=d.get("jitter", 0.1)
-        )
+        return retry_policy_from_json(s)
 
     def _row_to_execution(self, row: Any, progress: List[ExecutionProgress]) -> ExecutionRecord:
-        return ExecutionRecord(
-            id=row["id"],
-            root_function=row["root_function"],
-            state=row["state"],
-            args=row["args"],
-            kwargs=row["kwargs"],
-            result=row["result"],
-            error=row["error"],
-            retries=row["retries"],
-            created_at=row["created_at"],
-            started_at=row["started_at"],
-            completed_at=row["completed_at"],
-            expiry_at=row["expiry_at"],
-            progress=progress,
-            tags=json.loads(row["tags"]),
-            priority=row["priority"],
-            queue=row["queue"]
-        )
+        return row_to_execution(row, progress)
 
     def _row_to_progress(self, row: Any) -> ExecutionProgress:
-        return ExecutionProgress(
-            step=row["step"],
-            status=row["status"],
-            started_at=row["started_at"],
-            completed_at=row["completed_at"],
-            detail=row["detail"]
-        )
+        return row_to_progress(row)
 
     def _row_to_task(self, row: Any) -> TaskRecord:
-        return TaskRecord(
-            id=row["id"],
-            execution_id=row["execution_id"],
-            step_name=row["step_name"],
-            kind=row["kind"],
-            parent_task_id=row["parent_task_id"],
-            state=row["state"],
-            args=row["args"],
-            kwargs=row["kwargs"],
-            result=row["result"],
-            error=row["error"],
-            retries=row["retries"],
-            created_at=row["created_at"],
-            started_at=row["started_at"],
-            completed_at=row["completed_at"],
-            worker_id=row["worker_id"],
-            lease_expires_at=row["lease_expires_at"],
-            tags=json.loads(row["tags"]),
-            priority=row["priority"],
-            queue=row["queue"],
-            idempotency_key=row["idempotency_key"],
-            retry_policy=self._json_to_policy(row["retry_policy"]),
-            scheduled_for=row["scheduled_for"]
-        )
+        return row_to_task(row)

@@ -7,7 +7,21 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Any
 from senpuki.backend.base import Backend
 from senpuki.core import ExecutionRecord, TaskRecord, ExecutionProgress, RetryPolicy, SignalRecord, DeadLetterRecord
-from senpuki.backend.utils import task_record_to_json, task_record_from_json
+from senpuki.backend.utils import (
+    build_filtered_count_query,
+    build_filtered_list_query,
+    execution_row_values,
+    qmark_placeholder,
+    row_to_dead_letter,
+    row_to_execution,
+    row_to_progress,
+    row_to_signal,
+    row_to_task,
+    retry_policy_from_json,
+    retry_policy_to_json,
+    task_record_to_json,
+    task_row_values,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,29 +186,29 @@ class SQLiteBackend(Backend):
                         value BLOB
                     )
                 """)
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS execution_counters (
+                        execution_id TEXT,
+                        name TEXT,
+                        value REAL NOT NULL,
+                        PRIMARY KEY (execution_id, name)
+                    )
+                """)
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS execution_state (
+                        execution_id TEXT,
+                        key TEXT,
+                        value BLOB,
+                        PRIMARY KEY (execution_id, key)
+                    )
+                """)
                 await db.execute("COMMIT")
             except Exception:
                 await db.execute("ROLLBACK")
                 raise
 
     def _execution_row_values(self, record: ExecutionRecord) -> tuple[Any, ...]:
-        return (
-            record.id,
-            record.root_function,
-            record.state,
-            record.args,
-            record.kwargs,
-            record.result,
-            record.error,
-            record.retries,
-            record.created_at,
-            record.started_at,
-            record.completed_at,
-            record.expiry_at,
-            json.dumps(record.tags),
-            record.priority,
-            record.queue,
-        )
+        return execution_row_values(record)
 
     async def _insert_execution(self, db: aiosqlite.Connection, record: ExecutionRecord) -> None:
         await db.execute(
@@ -208,30 +222,7 @@ class SQLiteBackend(Backend):
             )
 
     def _task_row_values(self, task: TaskRecord) -> tuple[Any, ...]:
-        return (
-            task.id,
-            task.execution_id,
-            task.step_name,
-            task.kind,
-            task.parent_task_id,
-            task.state,
-            task.args,
-            task.kwargs,
-            task.result,
-            task.error,
-            task.retries,
-            task.created_at,
-            task.started_at,
-            task.completed_at,
-            task.worker_id,
-            task.lease_expires_at,
-            json.dumps(task.tags),
-            task.priority,
-            task.queue,
-            task.idempotency_key,
-            self._policy_to_json(task.retry_policy),
-            task.scheduled_for,
-        )
+        return task_row_values(task)
 
     async def _insert_task(self, db: aiosqlite.Connection, task: TaskRecord) -> None:
         await db.execute(
@@ -304,14 +295,14 @@ class SQLiteBackend(Backend):
     async def list_executions(self, limit: int = 10, offset: int = 0, state: str | None = None) -> List[ExecutionRecord]:
         async with self._lock:
             db = await self._get_connection()
-            query = "SELECT * FROM executions"
-            params: List[Any] = []
-            if state:
-                query += " WHERE state = ?"
-                params.append(state)
-            
-            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
+            query, params = build_filtered_list_query(
+                table="executions",
+                filters=[("state", state)],
+                order_by="created_at DESC",
+                limit=limit,
+                offset=offset,
+                placeholder=qmark_placeholder,
+            )
             
             async with db.execute(query, tuple(params)) as cursor:
                 rows = await cursor.fetchall()
@@ -320,6 +311,19 @@ class SQLiteBackend(Backend):
                     # For listing, we might skip fetching progress to keep it light
                     results.append(self._row_to_execution(row, progress=[]))
                 return results
+
+    async def count_executions(self, state: str | None = None) -> int:
+        async with self._lock:
+            db = await self._get_connection()
+            query, params = build_filtered_count_query(
+                table="executions",
+                filters=[("state", state)],
+                placeholder=qmark_placeholder,
+            )
+
+            async with db.execute(query, tuple(params)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
 
     async def create_task(self, task: TaskRecord) -> None:
         await self.create_tasks([task])
@@ -343,14 +347,11 @@ class SQLiteBackend(Backend):
     async def count_tasks(self, queue: str | None = None, state: str | None = None) -> int:
         async with self._lock:
             db = await self._get_connection()
-            query = "SELECT COUNT(*) FROM tasks WHERE 1=1"
-            params: List[Any] = []
-            if queue:
-                query += " AND queue = ?"
-                params.append(queue)
-            if state:
-                query += " AND state = ?"
-                params.append(state)
+            query, params = build_filtered_count_query(
+                table="tasks",
+                filters=[("queue", queue), ("state", state)],
+                placeholder=qmark_placeholder,
+            )
             
             async with db.execute(query, tuple(params)) as cursor:
                 row = await cursor.fetchone()
@@ -373,11 +374,11 @@ class SQLiteBackend(Backend):
                 await db.execute("""
                     UPDATE tasks SET
                         state=?, result=?, error=?, retries=?, started_at=?, completed_at=?,
-                        worker_id=?, lease_expires_at=?
+                        worker_id=?, lease_expires_at=?, scheduled_for=?
                     WHERE id=?
                 """, (
                     task.state, task.result, task.error, task.retries, task.started_at,
-                    task.completed_at, task.worker_id, task.lease_expires_at, task.id
+                    task.completed_at, task.worker_id, task.lease_expires_at, task.scheduled_for, task.id
                 ))
                 await db.execute("COMMIT")
             except Exception:
@@ -387,14 +388,14 @@ class SQLiteBackend(Backend):
     async def list_tasks(self, limit: int = 10, offset: int = 0, state: str | None = None) -> List[TaskRecord]:
         async with self._lock:
             db = await self._get_connection()
-            query = "SELECT * FROM tasks"
-            params: List[Any] = []
-            if state:
-                query += " WHERE state = ?"
-                params.append(state)
-            
-            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
+            query, params = build_filtered_list_query(
+                table="tasks",
+                filters=[("state", state)],
+                order_by="created_at DESC",
+                limit=limit,
+                offset=offset,
+                placeholder=qmark_placeholder,
+            )
             
             async with db.execute(query, tuple(params)) as cursor:
                 rows = await cursor.fetchall()
@@ -416,6 +417,8 @@ class SQLiteBackend(Backend):
             lease_duration = timedelta(minutes=5)
             
         expires_at = now + lease_duration
+        worker_tags_set = set(tags or [])
+        should_filter_by_tags = bool(tags)
         
         # Helper for queues condition
         queue_clause = ""
@@ -451,6 +454,11 @@ class SQLiteBackend(Backend):
                     return None
 
                 for row in candidates:
+                    if should_filter_by_tags:
+                        task_tags = json.loads(row["tags"]) if row["tags"] else []
+                        if task_tags and worker_tags_set.isdisjoint(task_tags):
+                            continue
+
                     step_name = row["step_name"]
                     limit = concurrency_limits.get(step_name) if concurrency_limits else None
 
@@ -607,11 +615,7 @@ class SQLiteBackend(Backend):
                 raise
 
     def _row_to_dead_letter(self, row: Any) -> DeadLetterRecord:
-        moved_at = row["moved_at"]
-        if isinstance(moved_at, str):
-            moved_at = datetime.fromisoformat(moved_at)
-        task = task_record_from_json(row["data"])
-        return DeadLetterRecord(task=task, reason=row["reason"], moved_at=moved_at)
+        return row_to_dead_letter(row)
 
     async def list_dead_tasks(self, limit: int = 50) -> List[DeadLetterRecord]:
         async with self._lock:
@@ -622,6 +626,13 @@ class SQLiteBackend(Backend):
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [self._row_to_dead_letter(row) for row in rows]
+
+    async def count_dead_tasks(self) -> int:
+        async with self._lock:
+            db = await self._get_connection()
+            async with db.execute("SELECT COUNT(*) FROM dead_tasks") as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
 
     async def get_dead_task(self, task_id: str) -> DeadLetterRecord | None:
         async with self._lock:
@@ -661,6 +672,8 @@ class SQLiteBackend(Backend):
                 await db.execute(f"DELETE FROM tasks WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", (older_than,))
                 await db.execute(f"DELETE FROM execution_progress WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", (older_than,))
                 await db.execute(f"DELETE FROM signals WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", (older_than,))
+                await db.execute(f"DELETE FROM execution_counters WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", (older_than,))
+                await db.execute(f"DELETE FROM execution_state WHERE execution_id IN (SELECT id FROM executions WHERE {where_clause})", (older_than,))
                 
                 # Delete executions
                 cursor = await db.execute(f"DELETE FROM executions WHERE {where_clause}", (older_than,))
@@ -708,14 +721,109 @@ class SQLiteBackend(Backend):
                 row = await cursor.fetchone()
                 if not row:
                     return None
-                return SignalRecord(
-                    execution_id=row["execution_id"],
-                    name=row["name"],
-                    payload=row["payload"],
-                    created_at=datetime.fromisoformat(row["created_at"]) if isinstance(row["created_at"], str) else row["created_at"],
-                    consumed=bool(row["consumed"]),
-                    consumed_at=datetime.fromisoformat(row["consumed_at"]) if row["consumed_at"] and isinstance(row["consumed_at"], str) else row["consumed_at"]
+                return row_to_signal(row)
+
+    async def ensure_execution_counters(self, execution_id: str, counters: dict[str, int | float]) -> None:
+        if not counters:
+            return
+        async with self._lock:
+            db = await self._get_connection()
+            await db.execute("BEGIN")
+            try:
+                await db.executemany(
+                    """
+                    INSERT INTO execution_counters (execution_id, name, value)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(execution_id, name) DO NOTHING
+                    """,
+                    [(execution_id, name, float(value)) for name, value in counters.items()],
                 )
+                await db.execute("COMMIT")
+            except Exception:
+                await db.execute("ROLLBACK")
+                raise
+
+    async def increment_execution_counter(self, execution_id: str, name: str, amount: int | float) -> float:
+        async with self._lock:
+            db = await self._get_connection()
+            await db.execute("BEGIN")
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO execution_counters (execution_id, name, value)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(execution_id, name) DO UPDATE SET value = value + excluded.value
+                    """,
+                    (execution_id, name, float(amount)),
+                )
+                async with db.execute(
+                    "SELECT value FROM execution_counters WHERE execution_id = ? AND name = ?",
+                    (execution_id, name),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                await db.execute("COMMIT")
+                return float(row[0]) if row else 0.0
+            except Exception:
+                await db.execute("ROLLBACK")
+                raise
+
+    async def get_execution_counters(self, execution_id: str) -> dict[str, int | float]:
+        async with self._lock:
+            db = await self._get_connection()
+            async with db.execute(
+                "SELECT name, value FROM execution_counters WHERE execution_id = ?",
+                (execution_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return {row["name"]: row["value"] for row in rows}
+
+    async def ensure_execution_state_values(self, execution_id: str, values: dict[str, bytes]) -> None:
+        if not values:
+            return
+        async with self._lock:
+            db = await self._get_connection()
+            await db.execute("BEGIN")
+            try:
+                await db.executemany(
+                    """
+                    INSERT INTO execution_state (execution_id, key, value)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(execution_id, key) DO NOTHING
+                    """,
+                    [(execution_id, key, value) for key, value in values.items()],
+                )
+                await db.execute("COMMIT")
+            except Exception:
+                await db.execute("ROLLBACK")
+                raise
+
+    async def set_execution_state_value(self, execution_id: str, key: str, value: bytes) -> None:
+        async with self._lock:
+            db = await self._get_connection()
+            await db.execute("BEGIN")
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO execution_state (execution_id, key, value)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(execution_id, key) DO UPDATE SET value = excluded.value
+                    """,
+                    (execution_id, key, value),
+                )
+                await db.execute("COMMIT")
+            except Exception:
+                await db.execute("ROLLBACK")
+                raise
+
+    async def get_execution_state_values(self, execution_id: str) -> dict[str, bytes]:
+        async with self._lock:
+            db = await self._get_connection()
+            async with db.execute(
+                "SELECT key, value FROM execution_state WHERE execution_id = ?",
+                (execution_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return {row["key"]: row["value"] for row in rows}
 
 
     def _progress_to_dict(self, p: ExecutionProgress) -> dict:
@@ -728,77 +836,16 @@ class SQLiteBackend(Backend):
         }
 
     def _policy_to_json(self, p: RetryPolicy | None) -> str:
-        if not p:
-            return "{}"
-        return json.dumps({
-            "max_attempts": p.max_attempts,
-            "backoff_factor": p.backoff_factor,
-            "initial_delay": p.initial_delay,
-            "max_delay": p.max_delay,
-            "jitter": p.jitter
-        })
+        return retry_policy_to_json(p)
 
     def _json_to_policy(self, s: str) -> RetryPolicy:
-        d = json.loads(s)
-        return RetryPolicy(
-            max_attempts=d.get("max_attempts", 3),
-            backoff_factor=d.get("backoff_factor", 2.0),
-            initial_delay=d.get("initial_delay", 1.0),
-            max_delay=d.get("max_delay", 60.0),
-            jitter=d.get("jitter", 0.1)
-        )
+        return retry_policy_from_json(s)
 
     def _row_to_execution(self, row: Any, progress: List[ExecutionProgress]) -> ExecutionRecord:
-        return ExecutionRecord(
-            id=row["id"],
-            root_function=row["root_function"],
-            state=row["state"],
-            args=row["args"],
-            kwargs=row["kwargs"],
-            result=row["result"],
-            error=row["error"],
-            retries=row["retries"],
-            created_at=datetime.fromisoformat(row["created_at"]) if isinstance(row["created_at"], str) else row["created_at"],
-            started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] and isinstance(row["started_at"], str) else row["started_at"],
-            completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] and isinstance(row["completed_at"], str) else row["completed_at"],
-            expiry_at=datetime.fromisoformat(row["expiry_at"]) if row["expiry_at"] and isinstance(row["expiry_at"], str) else row["expiry_at"],
-            progress=progress,
-            tags=json.loads(row["tags"]),
-            priority=row["priority"],
-            queue=row["queue"]
-        )
+        return row_to_execution(row, progress)
 
     def _row_to_progress(self, row: Any) -> ExecutionProgress:
-        return ExecutionProgress(
-            step=row["step"],
-            status=row["status"],
-            started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] and isinstance(row["started_at"], str) else row["started_at"],
-            completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] and isinstance(row["completed_at"], str) else row["completed_at"],
-            detail=row["detail"]
-        )
+        return row_to_progress(row)
 
     def _row_to_task(self, row: Any) -> TaskRecord:
-        return TaskRecord(
-            id=row["id"],
-            execution_id=row["execution_id"],
-            step_name=row["step_name"],
-            kind=row["kind"],
-            parent_task_id=row["parent_task_id"],
-            state=row["state"],
-            args=row["args"],
-            kwargs=row["kwargs"],
-            result=row["result"],
-            error=row["error"],
-            retries=row["retries"],
-            created_at=datetime.fromisoformat(row["created_at"]) if isinstance(row["created_at"], str) else row["created_at"],
-            started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] and isinstance(row["started_at"], str) else row["started_at"],
-            completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] and isinstance(row["completed_at"], str) else row["completed_at"],
-            worker_id=row["worker_id"],
-            lease_expires_at=datetime.fromisoformat(row["lease_expires_at"]) if row["lease_expires_at"] and isinstance(row["lease_expires_at"], str) else row["lease_expires_at"],
-            tags=json.loads(row["tags"]),
-            priority=row["priority"],
-            queue=row["queue"],
-            idempotency_key=row["idempotency_key"],
-            retry_policy=self._json_to_policy(row["retry_policy"]),
-            scheduled_for=datetime.fromisoformat(row["scheduled_for"]) if row["scheduled_for"] and isinstance(row["scheduled_for"], str) else row["scheduled_for"]
-        )
+        return row_to_task(row)
