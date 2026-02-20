@@ -1,16 +1,15 @@
 from __future__ import annotations
 import asyncio
-import contextlib
 import functools
 import uuid
 import logging
 from datetime import datetime, timedelta
-from typing import Callable, Awaitable, Any, List, Literal, Optional
+from typing import Callable, Awaitable, Any, List, Literal, Optional, cast
 from contextvars import ContextVar
 
 from senpuki.core import (
-    Result, RetryPolicy, ExecutionRecord, TaskRecord, ExecutionProgress, 
-    ExecutionState, compute_retry_delay, SignalRecord, DeadLetterRecord
+    Result, RetryPolicy, TaskRecord, ExecutionProgress, 
+    ExecutionState, DeadLetterRecord
 )
 from senpuki.backend.base import Backend
 from senpuki.notifications.base import NotificationBackend
@@ -18,6 +17,17 @@ from senpuki.registry import registry, FunctionMetadata, FunctionRegistry
 from senpuki.utils.serialization import Serializer, JsonSerializer
 from senpuki.utils.idempotency import default_idempotency_key
 from senpuki.utils.time import parse_duration
+from senpuki.executor_signals import persist_signal_and_wake_waiter, resolve_signal_wait
+from senpuki.executor_orchestration import (
+    build_dispatch_records,
+    execute_map_batch,
+    normalize_dispatch_timing,
+    persist_dispatch_records,
+    schedule_activity_and_wait,
+)
+from senpuki.executor_wait import wait_for_execution_terminal, wait_for_task_terminal
+from senpuki.executor_worker import lease_heartbeat_loop, run_claimed_task
+from senpuki.executor_context import ExecutionContext, current_execution_context
 from senpuki.metrics import MetricsRecorder, NoOpMetricsRecorder
 
 from dataclasses import dataclass, field, replace
@@ -379,129 +389,14 @@ class Senpuki:
         if not meta:
             raise UnregisteredFunctionError(name)
 
-        # Prepare tasks
-        tasks_to_create: List[TaskRecord] = []
-        # We also need to track cache/idempotency hits to avoid scheduling them
-        results_or_tasks: List[Any | TaskRecord] = [] 
-        
-        exec_id = current_execution_id.get() or ""
-        parent_id = current_task_id.get() or ""
-
-        # Pre-calculate common fields
-        args_list = []
-        for item in iterable:
-             # Support multiple args if iterable yields tuples? 
-             # Standard map(func, iterable) takes one arg per item from iterable.
-             # If user wants multi-args, they use starmap or pass tuple.
-             # We'll assume single arg per item for simplicity matching python map.
-             args = (item,)
-             kwargs = {}
-             args_list.append((args, kwargs))
-
-        # Check cache/idempotency
-        # TODO: Batch read cache/idempotency would be better. For now loop.
-        
-        for i, (args, kwargs) in enumerate(args_list):
-            key = None
-            hit = False
-            
-            if meta.idempotent or meta.cached:
-                if meta.idempotency_key_func:
-                    key = meta.idempotency_key_func(*args, **kwargs)
-                else:
-                    key = default_idempotency_key(meta.name, meta.version, args, kwargs, serializer=executor.serializer)
-
-                if key:
-                     if meta.cached:
-                         cached_val = await executor.backend.get_cached_result(key)
-                         if cached_val is not None:
-                             if exec_id:
-                                 await executor.backend.append_progress(exec_id, ExecutionProgress(
-                                     step=meta.name, status="cache_hit"
-                                 ))
-                             results_or_tasks.append(executor.serializer.loads(cached_val))
-                             hit = True
-                     
-                     if not hit and meta.idempotent:
-                         stored_val = await executor.backend.get_idempotency_result(key)
-                         if stored_val is not None:
-                             if exec_id:
-                                 await executor.backend.append_progress(exec_id, ExecutionProgress(
-                                     step=meta.name, status="cache_hit"
-                                 ))
-                             results_or_tasks.append(executor.serializer.loads(stored_val))
-                             hit = True
-
-            if not hit:
-                # Create TaskRecord
-                task_id = str(uuid.uuid4())
-                task = TaskRecord(
-                    id=task_id,
-                    execution_id=exec_id,
-                    step_name=meta.name,
-                    kind="activity",
-                    parent_task_id=parent_id,
-                    state="pending",
-                    args=executor.serializer.dumps(args),
-                    kwargs=executor.serializer.dumps(kwargs),
-                    retries=0,
-                    created_at=datetime.now(),
-                    tags=meta.tags,
-                    priority=meta.priority,
-                    queue=meta.queue,
-                    retry_policy=meta.retry_policy,
-                    idempotency_key=key,
-                    scheduled_for=None
-                )
-                tasks_to_create.append(task)
-                results_or_tasks.append(task)
-
-        # Batch create tasks
-        if tasks_to_create:
-            await executor.backend.create_tasks(tasks_to_create)
-            if exec_id:
-                # Batch log progress? We only have append_progress (single). 
-                # Doing N updates is okay-ish or we can add batch progress later.
-                # For now, just do it.
-                for t in tasks_to_create:
-                    await executor.backend.append_progress(exec_id, ExecutionProgress(
-                        step=meta.name, status="dispatched"
-                    ))
-        
-        # Optimized wait for all
-        # We release the permit ONCE for the whole batch
-        permit = current_permit_holder.get()
-        if permit:
-            permit.release()
-
-        try:
-            async def waiter(item):
-                if isinstance(item, TaskRecord):
-                    # Use internal wait that DOES NOT touch semaphore
-                    completed = await executor._wait_for_task_internal(item.id) # pyrefly: ignore[missing-attribute]
-                    if completed.state == "failed":
-                        if completed.error:
-                            err = executor.serializer.loads(completed.error) #  pyrefly: ignore[missing-attribute]
-                            if isinstance(err, BaseException):
-                                 raise err
-                            raise Exception(str(err))
-                        raise Exception("Task failed")
-                    
-                    res = executor.serializer.loads(completed.result) if completed.result is not None else None #  pyrefly: ignore[missing-attribute]
-                    # Store cache/idempotency
-                    if item.idempotency_key and completed.result is not None:
-                        if meta.cached: #  pyrefly: ignore[missing-attribute]
-                            await executor.backend.set_cached_result(item.idempotency_key, completed.result) #  pyrefly: ignore[missing-attribute]
-                        if meta.idempotent: #  pyrefly: ignore[missing-attribute]
-                            await executor.backend.set_idempotency_result(item.idempotency_key, completed.result) #  pyrefly: ignore[missing-attribute]
-                    return res
-                else:
-                    return item
-
-            return await asyncio.gather(*[waiter(item) for item in results_or_tasks])
-        finally:
-            if permit:
-                await permit.acquire()
+        return await execute_map_batch(
+            executor=executor,
+            meta=meta,
+            iterable=iterable,
+            exec_id=current_execution_id.get() or "",
+            parent_id=current_task_id.get() or "",
+            permit_holder=current_permit_holder.get(),
+        )
 
     @classmethod
     async def gather(cls, *tasks, **kwargs):
@@ -514,6 +409,30 @@ class Senpuki:
         Supports `return_exceptions=True`.
         """
         return await asyncio.gather(*tasks, **kwargs)
+
+    @classmethod
+    def context(
+        cls,
+        *,
+        counters: dict[str, int | float] | None = None,
+        state: dict[str, Any] | None = None,
+    ) -> ExecutionContext:
+        executor = current_executor.get()
+        if not executor:
+            raise RuntimeError("Cannot access context outside of durable function")
+
+        exec_id = current_execution_id.get()
+        if not exec_id:
+            raise RuntimeError("Cannot access context without active execution")
+
+        ctx = current_execution_context.get()
+        if ctx is None:
+            ctx = ExecutionContext(executor, exec_id)
+            current_execution_context.set(ctx)
+
+        if counters or state:
+            ctx._track(ctx.initialize(counters=counters, state=state))
+        return ctx
 
     @classmethod
     async def _call_durable_stub(cls, meta: FunctionMetadata, args: tuple, kwargs: dict):
@@ -554,7 +473,7 @@ class Senpuki:
             # This 'if' should be at the same indentation level as 'if meta.cached:'
             if meta.idempotent:
                 stored_val = await executor.backend.get_idempotency_result(key)
-                if stored_val:
+                if stored_val is not None:
                     logger.info(f"Idempotency HIT for {meta.name} with key {key}")
                     if exec_id: # Only append progress if we are in an execution
                         await executor.backend.append_progress(exec_id, ExecutionProgress(
@@ -609,74 +528,25 @@ class Senpuki:
         if not meta:
             raise UnregisteredFunctionError(name)
 
-        if expiry and max_duration:
-            raise ValueError("Cannot provide both 'expiry' and 'max_duration'. Use 'max_duration' as 'expiry' is deprecated.")
+        normalized_expiry, normalized_delay = normalize_dispatch_timing(
+            expiry=expiry,
+            max_duration=max_duration,
+            delay=delay,
+        )
 
-        if max_duration:
-            expiry = max_duration
-
-        if isinstance(expiry, str):
-            expiry = parse_duration(expiry)
-            
-        scheduled_for = None
-        if delay:
-            if isinstance(delay, (str, dict)):
-                delay = parse_duration(delay)
-            scheduled_for = datetime.now() + delay
-        
-        expiry_at = (datetime.now() + expiry) if expiry else None
-        if scheduled_for and expiry:
-             # expiry should start AFTER scheduled start? 
-             # For now simple logic: expiry is absolute or relative to dispatch?
-             # Standard: relative to dispatch usually, but if delayed, maybe relative to start.
-             # Let's keep it simple: expiry_at is absolute. If delay > expiry, it times out immediately.
-             # User should set expiry appropriately.
-             expiry_at = scheduled_for + expiry
-
-        execution_id = str(uuid.uuid4())
-        
-        record = ExecutionRecord(
-            id=execution_id,
-            root_function=name,
-            state="pending",
-            args=self.serializer.dumps(args),
-            kwargs=self.serializer.dumps(kwargs),
-            retries=0,
-            created_at=datetime.now(),
-            started_at=None,
-            completed_at=None,
-            expiry_at=expiry_at,
-            progress=[],
+        execution_id, record, task = build_dispatch_records(
+            name=name,
+            args_bytes=self.serializer.dumps(args),
+            kwargs_bytes=self.serializer.dumps(kwargs),
+            retry_policy=meta.retry_policy,
             tags=tags or meta.tags,
             priority=priority,
-            queue=queue or meta.queue
+            queue=queue or meta.queue,
+            expiry=normalized_expiry,
+            delay=normalized_delay,
         )
-        
-        task = TaskRecord(
-            id=str(uuid.uuid4()),
-            execution_id=execution_id,
-            step_name=name,
-            kind="orchestrator",
-            parent_task_id=None,
-            state="pending",
-            args=record.args,
-            kwargs=record.kwargs,
-            retries=0,
-            created_at=datetime.now(),
-            tags=record.tags,
-            priority=priority,
-            queue=record.queue,
-            retry_policy=meta.retry_policy,
-            scheduled_for=scheduled_for
-        )
-        
-        create_with_root = getattr(self.backend, "create_execution_with_root_task", None)
-        if create_with_root is not None and callable(create_with_root):
-            await create_with_root(record, task)  # type: ignore[misc]
-        else:
-            await self.backend.create_execution(record)
-            await self.backend.create_task(task)
-        
+        await persist_dispatch_records(executor=self, execution=record, root_task=task)
+
         return execution_id
 
     async def send_signal(self, execution_id: str, name: str, payload: Any) -> None:
@@ -685,41 +555,20 @@ class Senpuki:
         If the execution is waiting for this signal, it will be resumed.
         If not, the signal will be buffered.
         """
-        # 1. Store signal
         payload_bytes = self.serializer.dumps(payload)
-        signal = SignalRecord(
+        await persist_signal_and_wake_waiter(
             execution_id=execution_id,
             name=name,
-            payload=payload_bytes,
-            created_at=datetime.now(),
-            consumed=False
+            payload_bytes=payload_bytes,
+            create_signal=self.backend.create_signal,
+            list_tasks_for_execution=self.backend.list_tasks_for_execution,
+            update_task=self.backend.update_task,
+            notify_task_completed=(
+                self.notification_backend.notify_task_completed
+                if self.notification_backend
+                else None
+            ),
         )
-        await self.backend.create_signal(signal)
-        
-        # 2. Wake up pending task if any
-        # We use a deterministic task ID for signals: uuid5(exec_id + name)
-        # But to be safe, let's just query the tasks or construct the ID if we define the generation rule.
-        # Let's check if the specific waiter task exists.
-        
-        # To avoid dependency on uuid namespacing details, let's just search.
-        # Optimization: We can search for tasks with step_name=f"signal:{name}"
-        # But backend doesn't support search by step_name.
-        # So we iterate.
-        tasks = await self.backend.list_tasks_for_execution(execution_id)
-        target_step = f"signal:{name}"
-        
-        for t in tasks:
-            if t.step_name == target_step and t.kind == "signal" and t.state == "pending":
-                # Mark as completed
-                t.state = "completed"
-                t.result = payload_bytes
-                t.completed_at = datetime.now()
-                await self.backend.update_task(t)
-                
-                # Notify
-                if self.notification_backend:
-                     await self.notification_backend.notify_task_completed(t.id)
-                break
 
     @staticmethod
     async def wait_for_signal(name: str) -> Any:
@@ -740,95 +589,18 @@ class Senpuki:
         if not exec_id:
              raise Exception("Cannot wait for signal outside of durable function")
              
-        step_name = f"signal:{name}"
-        
-        # Generate deterministic ID for the signal task to ensure idempotency on replay
-        # We use a constructed UUID based on exec_id and signal name
-        # exec_id is a UUID string.
-        try:
-             exec_uuid = uuid.UUID(exec_id)
-        except ValueError:
-             # Fallback if exec_id is not uuid (e.g. testing)
-             exec_uuid = uuid.uuid4() 
-             
-        task_id = str(uuid.uuid5(exec_uuid, step_name))
-        
-        # 1. Check if we already have this task (replay or already running)
-        existing_task = await self.backend.get_task(task_id)
-        if existing_task:
-            if existing_task.state == "completed":
-                return self.serializer.loads(existing_task.result) if existing_task.result is not None else None
-            else:
-                # Still pending, wait for it
-                completed = await self._wait_for_task(task_id)
-                return self.serializer.loads(completed.result) if completed.result is not None else None
-                
-        # 2. Check signal buffer
-        signal = await self.backend.get_signal(exec_id, name)
-        if signal and not signal.consumed:
-            # Consumed from buffer immediately
-            signal.consumed = True
-            signal.consumed_at = datetime.now()
-            await self.backend.create_signal(signal) # upsert
-            
-            # Create completed task
-            task = TaskRecord(
-                 id=task_id,
-                 execution_id=exec_id,
-                 step_name=step_name,
-                 kind="signal",
-                 parent_task_id=current_task_id.get(),
-                 state="completed",
-                 args=b"",
-                 kwargs=b"",
-                 retries=0,
-                 created_at=datetime.now(),
-                 completed_at=datetime.now(),
-                 tags=["signal"],
-                 priority=0,
-                 queue=None,
-                 retry_policy=None,
-                 result=signal.payload
-            )
-            await self.backend.create_task(task)
-            await self.backend.append_progress(exec_id, ExecutionProgress(
-                step=step_name, status="completed", detail="Signal consumed from buffer"
-            ))
-            return self.serializer.loads(signal.payload)
-            
-        # 3. Create pending task and wait
-        task = TaskRecord(
-             id=task_id,
-             execution_id=exec_id,
-             step_name=step_name,
-             kind="signal",
-             parent_task_id=current_task_id.get(),
-             state="pending",
-             args=b"",
-             kwargs=b"",
-             retries=0,
-             created_at=datetime.now(),
-             tags=["signal"],
-             priority=0,
-             queue=None,
-             retry_policy=None
+        return await resolve_signal_wait(
+            execution_id=exec_id,
+            name=name,
+            parent_task_id=current_task_id.get(),
+            loads=self.serializer.loads,
+            get_task=self.backend.get_task,
+            get_signal=self.backend.get_signal,
+            create_signal=self.backend.create_signal,
+            create_task=self.backend.create_task,
+            append_progress=self.backend.append_progress,
+            wait_for_task=self._wait_for_task,
         )
-        await self.backend.create_task(task)
-        await self.backend.append_progress(exec_id, ExecutionProgress(
-            step=step_name, status="dispatched", detail="Waiting for signal"
-        ))
-        
-        # Wait
-        completed = await self._wait_for_task(task_id)
-        
-        # Mark signal consumed if it exists now
-        s = await self.backend.get_signal(exec_id, name)
-        if s and not s.consumed:
-             s.consumed = True
-             s.consumed_at = datetime.now()
-             await self.backend.create_signal(s)
-             
-        return self.serializer.loads(completed.result) if completed.result is not None else None
 
     async def _schedule_activity(
         self, 
@@ -839,66 +611,30 @@ class Senpuki:
         idempotency_key: str | None,
         delay: timedelta | None = None
     ) -> TaskRecord:
-        exec_id = current_execution_id.get() or ""
-        parent_id = current_task_id.get() or ""
-        
-        scheduled_for = None
-        if delay:
-            scheduled_for = datetime.now() + delay
-
-        task_id = str(uuid.uuid4())
-        task = TaskRecord(
-            id=task_id,
-            execution_id=exec_id,
-            step_name=meta.name,
-            kind="activity",
-            parent_task_id=parent_id,
-            state="pending",
-            args=self.serializer.dumps(args),
-            kwargs=self.serializer.dumps(kwargs),
-            retries=0,
-            created_at=datetime.now(),
-            tags=meta.tags,
-            priority=meta.priority,
-            queue=meta.queue,
-            retry_policy=meta.retry_policy,
-            idempotency_key=idempotency_key, # Store the key received from _call_durable_stub
-            scheduled_for=scheduled_for
+        return await schedule_activity_and_wait(
+            executor=self,
+            meta=meta,
+            args=args,
+            kwargs=kwargs,
+            idempotency_key=idempotency_key,
+            delay=delay,
+            exec_id=current_execution_id.get() or "",
+            parent_id=current_task_id.get() or "",
         )
-        
-        await self.backend.create_task(task)
-        await self.backend.append_progress(exec_id, ExecutionProgress(
-            step=meta.name, status="dispatched", detail=f"Scheduled for {delay}" if delay else None
-        ))
-        
-        completed_task = await self._wait_for_task(task_id)
-        
-        return completed_task # Return completed_task, _call_durable_stub handles errors and result processing
 
     async def _wait_for_task_internal(self, task_id: str, expiry: float | None = None) -> TaskRecord:
         """Waits for task completion without modifying semaphore."""
-        if self.notification_backend:
-            # Subscribe and wait
-            it = self.notification_backend.subscribe_to_task(task_id, expiry=expiry)
-            async for _ in it:
-                pass 
-            # After loop (completion or expiry), fetch latest
-            task = await self.backend.get_task(task_id)
-            if not task:
-                raise ValueError(f"Task not found after notification: {task_id}")
-            return task
-        else:
-            # Poll
-            start = datetime.now()
-            delay = self.poll_min_interval
-            while True:
-                task = await self.backend.get_task(task_id)
-                if task and task.state in ("completed", "failed"):
-                    return task
-                if expiry and (datetime.now() - start).total_seconds() > expiry:
-                        raise ExpiryError(f"Task {task_id} timed out")
-                await _original_sleep(delay)
-                delay = min(self.poll_max_interval, delay * self.poll_backoff_factor)
+        return await wait_for_task_terminal(
+            task_id=task_id,
+            get_task=self.backend.get_task,
+            notification_backend=self.notification_backend,
+            expiry=expiry,
+            poll_min_interval=self.poll_min_interval,
+            poll_max_interval=self.poll_max_interval,
+            poll_backoff_factor=self.poll_backoff_factor,
+            sleep_fn=_original_sleep,
+            expiry_error_factory=ExpiryError,
+        )
 
     async def _wait_for_task(self, task_id: str, expiry: float | None = None) -> TaskRecord:
         permit = current_permit_holder.get()
@@ -915,6 +651,22 @@ class Senpuki:
         record = await self.backend.get_execution(execution_id)
         if not record:
             raise ValueError("Execution not found")
+
+        counters_method = getattr(self.backend, "get_execution_counters", None)
+        if callable(counters_method):
+            counters = await cast(Awaitable[dict[str, int | float]], counters_method(execution_id))
+        else:
+            counters = {}
+
+        state_method = getattr(self.backend, "get_execution_state_values", None)
+        if callable(state_method):
+            state_values = await cast(Awaitable[dict[str, bytes]], state_method(execution_id))
+        else:
+            state_values = {}
+        custom_state = {
+            key: self.serializer.loads(value)
+            for key, value in state_values.items()
+        }
         # Optional: refresh progress?
         return ExecutionState(
             id=record.id,
@@ -926,14 +678,16 @@ class Senpuki:
             progress=record.progress,
             tags=record.tags,
             priority=record.priority,
-            queue=record.queue
+            queue=record.queue,
+            counters=counters,
+            custom_state=custom_state,
         )
 
     async def result_of(self, execution_id: str) -> Result[Any, Any]:
         record = await self.backend.get_execution(execution_id)
         if not record:
             raise ValueError("Execution not found")
-        if record.state not in ("completed", "failed", "timed_out"):
+        if record.state not in ("completed", "failed", "timed_out", "cancelled"):
              raise Exception("Execution still running")
         
         if record.result:
@@ -947,7 +701,10 @@ class Senpuki:
             if isinstance(err, Result):
                  return err
             return Result.Error(err)
-            
+
+        if record.state == "cancelled":
+            return Result.Error(Exception("Execution cancelled"))
+             
         raise Exception("No result available")
 
     async def wait_for(self, execution_id: str, expiry: float | None = None) -> Result[Any, Any]:
@@ -961,25 +718,14 @@ class Senpuki:
         except Exception:
             pass # Not done yet
 
-        if self.notification_backend:
-            it = self.notification_backend.subscribe_to_execution(execution_id, expiry=expiry)
-            try:
-                async for _ in it:
-                    pass
-            except asyncio.TimeoutError:
-                raise ExpiryError(f"Timed out waiting for execution {execution_id}")
-        else:
-            # Polling fallback
-            start = datetime.now()
-            while True:
-                state = await self.state_of(execution_id)
-                if state.state in ("completed", "failed", "timed_out", "cancelled"):
-                    break
-                
-                if expiry and (datetime.now() - start).total_seconds() > expiry:
-                    raise ExpiryError(f"Timed out waiting for execution {execution_id}")
-                
-                await asyncio.sleep(0.5)
+        await wait_for_execution_terminal(
+            execution_id=execution_id,
+            state_of=self.state_of,
+            notification_backend=self.notification_backend,
+            expiry=expiry,
+            sleep_interval=0.5,
+            expiry_error_factory=ExpiryError,
+        )
 
         return await self.result_of(execution_id)
 
@@ -1233,29 +979,15 @@ class Senpuki:
         interval: timedelta,
         stop_event: asyncio.Event,
     ) -> None:
-        timeout = interval.total_seconds()
-        while True:
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=timeout)
-                return
-            except asyncio.TimeoutError:
-                try:
-                    renewed = await self.backend.renew_task_lease(task_id, worker_id, lease_duration)
-                except Exception:
-                    logger.exception("Lease renewal failed for task %s", task_id)
-                    self.metrics.lease_renewed(task_id=task_id, success=False)
-                    return
-
-                self.metrics.lease_renewed(task_id=task_id, success=renewed)
-                if not renewed:
-                    logger.warning(
-                        "Lease renewal lost for task %s on worker %s; allowing reclaim",
-                        task_id,
-                        worker_id,
-                    )
-                    return
-            except asyncio.CancelledError:
-                return
+        await lease_heartbeat_loop(
+            executor=self,
+            task_id=task_id,
+            worker_id=worker_id,
+            lease_duration=lease_duration,
+            interval=interval,
+            stop_event=stop_event,
+            logger=logger,
+        )
 
     async def _handle_task(
         self, 
@@ -1272,219 +1004,19 @@ class Senpuki:
         token_sem = current_worker_semaphore.set(sem)
         token_permit = current_permit_holder.set(PermitHolder(sem))
         token_worker = current_worker_id.set(worker_id)
-        
-        execution = None
-        heartbeat_task: asyncio.Task | None = None
-        heartbeat_stop: asyncio.Event | None = None
+
         try:
-            # Check execution state or expiry
-            execution = await self.backend.get_execution(task.execution_id)
-            if not execution:
-                raise ValueError(f"Execution {task.execution_id} not found")
-            
-            if execution.expiry_at and datetime.now() > execution.expiry_at:
-                execution.state = "timed_out"
-                execution.completed_at = datetime.now()
-                task.state = "failed"
-                task.error = self.serializer.dumps(Exception("Execution timed out"))
-                task.completed_at = datetime.now()
-                await self.backend.update_execution(execution)
-                await self.backend.update_task(task)
-                if self.notification_backend:
-                    await self.notification_backend.notify_task_updated(task.id, "failed")
-                    await self.notification_backend.notify_execution_updated(task.execution_id, "timed_out")
-                await self.backend.append_progress(task.execution_id, ExecutionProgress(
-                     step=task.step_name, status="failed", detail="Execution timed out"
-                ))
-                return # Exit early
-
-            if execution.state in ("cancelling", "cancelled"):
-                 task.state = "failed"
-                 task.error = self.serializer.dumps(Exception("Execution cancelled"))
-                 task.completed_at = datetime.now()
-                 await self.backend.update_task(task)
-                 if self.notification_backend:
-                     await self.notification_backend.notify_task_updated(task.id, "failed")
-                     # Ensure execution notification if state changed to cancelled? 
-                     # State is already cancelling/cancelled, but maybe we want to signal task failed
-                 await self.backend.append_progress(task.execution_id, ExecutionProgress(
-                     step=task.step_name, status="failed", detail="Execution cancelled"
-                 ))
-                 return
-
-            if task.kind == "orchestrator":
-                 # Update execution state to running if needed
-                 if execution.state == "pending":
-                     execution.state = "running"
-                     execution.started_at = datetime.now()
-                     await self.backend.update_execution(execution)
-                     if self.notification_backend:
-                         await self.notification_backend.notify_execution_updated(task.execution_id, "running")
-
-            args = self.serializer.loads(task.args)
-            kwargs = self.serializer.loads(task.kwargs)
-            
-            meta = self.registry.get(task.step_name)
-            if not meta:
-                raise UnregisteredFunctionError(task.step_name)
-                
-            # Update progress
-            await self.backend.append_progress(task.execution_id, ExecutionProgress(
-                step=task.step_name, status="running", started_at=datetime.now()
-            ))
-
-            if heartbeat_interval:
-                heartbeat_stop = asyncio.Event()
-                heartbeat_task = asyncio.create_task(
-                    self._lease_heartbeat_loop(
-                        task_id=task.id,
-                        worker_id=worker_id,
-                        lease_duration=lease_duration,
-                        interval=heartbeat_interval,
-                        stop_event=heartbeat_stop,
-                    )
-                )
-
-            # Execute
-            # logger.info(f"Executing {task.step_name} with expiry {execution.expiry_at}")
-            if execution.expiry_at:
-                remaining = (execution.expiry_at - datetime.now()).total_seconds()
-                if remaining <= 0:
-                     # Already timed out
-                     raise ExpiryError("Execution timed out before start")
-                try:
-                    async with asyncio.timeout(remaining):
-                        result_val = await meta.fn(*args, **kwargs)
-                except asyncio.TimeoutError:
-                    # Mark execution as timed out
-                    execution.state = "timed_out"
-                    execution.completed_at = datetime.now()
-                    await self.backend.update_execution(execution)
-                    
-                    task.state = "failed"
-                    task.error = self.serializer.dumps(Exception("Execution timed out"))
-                    task.completed_at = datetime.now()
-                    await self.backend.update_task(task)
-                    
-                    if self.notification_backend:
-                        await self.notification_backend.notify_task_updated(task.id, "failed")
-                        await self.notification_backend.notify_execution_updated(task.execution_id, "timed_out")
-                    await self.backend.append_progress(task.execution_id, ExecutionProgress(
-                         step=task.step_name, status="failed", detail="Execution timed out"
-                    ))
-                    return
-            else:
-                # logger.info(f"Calling function {task.step_name}")
-                result_val = await meta.fn(*args, **kwargs)
-                # logger.info(f"Function {task.step_name} returned {result_val}")
-            
-            # Success
-            task.result = self.serializer.dumps(result_val)
-            task.state = "completed"
-            task.completed_at = datetime.now()
-            await self.backend.update_task(task)
-            
-            await self.backend.append_progress(task.execution_id, ExecutionProgress(
-                step=task.step_name, status="completed", started_at=task.started_at, completed_at=datetime.now()
-            ))
-            
-            if task.kind == "orchestrator":
-                execution.result = task.result
-                execution.state = "completed"
-                execution.completed_at = datetime.now()
-                await self.backend.update_execution(execution)
-                if self.notification_backend:
-                    await self.notification_backend.notify_execution_updated(task.execution_id, "completed")
-
-            if self.notification_backend:
-                await self.notification_backend.notify_task_completed(task.id)
-
-            # Caching logic for orchestrator tasks
-            if task.kind == "orchestrator" and meta.cached:
-                 key = default_idempotency_key(meta.name, meta.version, args, kwargs, serializer=self.serializer)
-                 await self.backend.set_cached_result(key, task.result)
-                 logger.debug(f"Cached result for orchestrator {meta.name} with key {key}")
-
-            duration_s = 0.0
-            if task.started_at and task.completed_at:
-                duration_s = (task.completed_at - task.started_at).total_seconds()
-            self.metrics.task_completed(
-                queue=task.queue,
-                step_name=task.step_name,
-                kind=task.kind,
-                duration_s=duration_s,
+            await run_claimed_task(
+                executor=self,
+                task=task,
+                worker_id=worker_id,
+                lease_duration=lease_duration,
+                heartbeat_interval=heartbeat_interval,
+                expiry_error_type=ExpiryError,
+                unregistered_error_factory=UnregisteredFunctionError,
+                logger=logger,
             )
-
-        except Exception as e:
-            # Retry logic
-            retry_policy = task.retry_policy or RetryPolicy()
-            attempt = task.retries + 1
-            
-            is_retryable = any(isinstance(e, t) for t in retry_policy.retry_for)
-            # Simplified check for retryable
-            
-            if is_retryable and attempt < retry_policy.max_attempts:
-                delay = compute_retry_delay(retry_policy, attempt)
-                task.retries = attempt
-                task.state = "pending"
-                task.lease_expires_at = datetime.now() + timedelta(seconds=delay)
-                task.worker_id = None # release back to pool
-                task.started_at = None
-                await self.backend.update_task(task)
-                await self.backend.append_progress(task.execution_id, ExecutionProgress(
-                     step=task.step_name, status="failed", detail=str(e)
-                ))
-                self.metrics.task_failed(
-                    queue=task.queue,
-                    step_name=task.step_name,
-                    kind=task.kind,
-                    reason=str(e),
-                    retrying=True,
-                )
-            else:
-                # Fatal failure
-                task.state = "failed"
-                task.error = self.serializer.dumps(e)
-                task.completed_at = datetime.now()
-                await self.backend.update_task(task)
-                await self.backend.move_task_to_dead_letter(task, str(e))
-                await self.backend.append_progress(task.execution_id, ExecutionProgress(
-                     step=task.step_name, status="failed", detail=str(e)
-                ))
-                self.metrics.task_failed(
-                    queue=task.queue,
-                    step_name=task.step_name,
-                    kind=task.kind,
-                    reason=str(e),
-                    retrying=False,
-                )
-                self.metrics.dead_lettered(
-                    queue=task.queue,
-                    step_name=task.step_name,
-                    kind=task.kind,
-                    reason=str(e),
-                )
-                if not execution: # pyrefly: ignore
-                    raise ValueError(f"Execution {task.execution_id} not found")
-
-                if task.kind == "orchestrator":
-                    execution.state = "failed"
-                    execution.error = task.error
-                    execution.completed_at = datetime.now()
-                    await self.backend.update_execution(execution)
-                    if self.notification_backend:
-                        await self.notification_backend.notify_execution_updated(task.execution_id, "failed")
-
-                if self.notification_backend:
-                    await self.notification_backend.notify_task_updated(task.id, "failed")
-
         finally:
-            if heartbeat_stop:
-                heartbeat_stop.set()
-            if heartbeat_task:
-                heartbeat_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await heartbeat_task
             sem.release()
             current_execution_id.reset(token_exec)
             current_task_id.reset(token_task)

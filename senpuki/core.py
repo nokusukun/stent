@@ -140,6 +140,8 @@ class ExecutionState:
     tags: List[str]
     priority: int
     queue: str | None
+    counters: dict[str, int | float] = field(default_factory=dict)
+    custom_state: dict[str, Any] = field(default_factory=dict)
 
     @property
     def progress_str(self) -> str:
