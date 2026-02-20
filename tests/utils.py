@@ -25,11 +25,11 @@ async def clear_test_backend(backend):
     if hasattr(backend, "pool") and backend.pool:
          async with backend.pool.acquire() as conn:
              # Check if tables exist before truncating
-             exists = await conn.fetchval(
-                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'executions')"
-             )
-             if exists:
-                await conn.execute("TRUNCATE TABLE executions, execution_progress, tasks, dead_tasks, cache, idempotency CASCADE")
+              exists = await conn.fetchval(
+                 "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'executions')"
+              )
+              if exists:
+                 await conn.execute("TRUNCATE TABLE executions, execution_progress, tasks, dead_tasks, cache, idempotency, execution_counters, execution_state CASCADE")
 
 async def cleanup_test_backend(backend):
     # First close the backend connection
@@ -52,5 +52,5 @@ async def cleanup_test_backend(backend):
     elif hasattr(backend, "pool") and backend.pool:
          # For postgres, we might want to truncate tables
          async with backend.pool.acquire() as conn:
-             await conn.execute("TRUNCATE TABLE executions, execution_progress, tasks, dead_tasks, cache, idempotency CASCADE")
+             await conn.execute("TRUNCATE TABLE executions, execution_progress, tasks, dead_tasks, cache, idempotency, execution_counters, execution_state CASCADE")
          await backend.pool.close()

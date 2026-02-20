@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 
 import pytest
@@ -143,6 +143,30 @@ async def test_sqlite_concurrency_limits_respected(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_sqlite_claim_respects_scheduled_for(tmp_path):
+    backend = SQLiteBackend(str(tmp_path / "scheduled.sqlite"))
+    await backend.init_db()
+
+    exec_id = "exec-scheduled"
+    await backend.create_execution(_make_execution(exec_id))
+
+    task = _make_task(exec_id, "task-scheduled")
+    task.scheduled_for = datetime.now() + timedelta(seconds=0.4)
+    await backend.create_task(task)
+
+    before_due = await backend.claim_next_task(worker_id="worker-a")
+    assert before_due is None
+
+    await asyncio.sleep(0.45)
+
+    after_due = await backend.claim_next_task(worker_id="worker-a")
+    assert after_due is not None
+    assert after_due.id == "task-scheduled"
+
+    await cleanup_test_backend(backend)
+
+
+@pytest.mark.asyncio
 async def test_dead_letter_round_trip(tmp_path):
     backend = SQLiteBackend(str(tmp_path / "dlq.sqlite"))
     await backend.init_db()
@@ -161,5 +185,30 @@ async def test_dead_letter_round_trip(tmp_path):
     deleted = await backend.delete_dead_task(task.id)
     assert deleted
     assert await backend.list_dead_tasks() == []
+
+    await cleanup_test_backend(backend)
+
+
+@pytest.mark.asyncio
+async def test_sqlite_count_apis(tmp_path):
+    backend = SQLiteBackend(str(tmp_path / "count.sqlite"))
+    await backend.init_db()
+
+    pending_exec = _make_execution("exec-pending")
+    completed_exec = _make_execution("exec-completed")
+    completed_exec.state = "completed"
+    completed_exec.completed_at = datetime.now()
+
+    await backend.create_execution(pending_exec)
+    await backend.create_execution(completed_exec)
+
+    assert await backend.count_executions() == 2
+    assert await backend.count_executions(state="pending") == 1
+    assert await backend.count_executions(state="completed") == 1
+
+    dead_task = _make_task("exec-pending", "dead-task")
+    await backend.move_task_to_dead_letter(dead_task, "boom")
+
+    assert await backend.count_dead_tasks() == 1
 
     await cleanup_test_backend(backend)

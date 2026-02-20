@@ -25,6 +25,8 @@ async def retryable_task(succeed_on_attempt: int):
 
 ATTEMPT_COUNTER = {}
 RECOVERY_TEST_STATE = {"first_run": True}
+DELAYED_RETRY_COUNTER = {}
+FALSEY_IDEMPOTENT_COUNTER = {}
 
 @Senpuki.durable()
 async def recovery_task():
@@ -42,6 +44,26 @@ async def stateful_retry_task(exec_id_for_counter: str):
         raise ValueError(f"Fail attempt {count}")
     return count
 
+
+@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=2, initial_delay=1.0, backoff_factor=1.0))
+async def delayed_retry_task(case_id: str):
+    count = DELAYED_RETRY_COUNTER.get(case_id, 0) + 1
+    DELAYED_RETRY_COUNTER[case_id] = count
+    if count == 1:
+        raise ValueError("fail once")
+    return count
+
+
+@Senpuki.durable(idempotent=True)
+async def falsey_idempotent_task(case_id: str, value):
+    FALSEY_IDEMPOTENT_COUNTER[case_id] = FALSEY_IDEMPOTENT_COUNTER.get(case_id, 0) + 1
+    return value
+
+
+@Senpuki.durable()
+async def falsey_idempotent_workflow(case_id: str, value):
+    return await falsey_idempotent_task(case_id, value)
+
 @Senpuki.durable(queue="high_priority_queue", tags=["data_processing"])
 async def high_priority_data_task(data: str) -> str:
     return f"Processed {data} with high priority"
@@ -49,6 +71,21 @@ async def high_priority_data_task(data: str) -> str:
 @Senpuki.durable(queue="low_priority_queue", tags=["reporting"])
 async def low_priority_report_task(report_id: str) -> str:
     return f"Generated report {report_id}"
+
+
+@Senpuki.durable(tags=["alpha"])
+async def alpha_tagged_task(value: str) -> str:
+    return f"alpha:{value}"
+
+
+@Senpuki.durable(tags=["beta"])
+async def beta_tagged_task(value: str) -> str:
+    return f"beta:{value}"
+
+
+@Senpuki.durable()
+async def untagged_task(value: str) -> str:
+    return f"untagged:{value}"
 
 LONG_TASK_INVOCATIONS = 0
 
@@ -171,6 +208,60 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         root_task = next(t for t in tasks if t.kind == "orchestrator")
         self.assertEqual(root_task.retries, 2)
 
+    async def test_retry_sets_scheduled_for_and_not_lease_expiry(self):
+        case_id = str(uuid.uuid4())
+        DELAYED_RETRY_COUNTER[case_id] = 0
+
+        exec_id = await self.executor.dispatch(delayed_retry_task, case_id)
+
+        pending_retry_seen = False
+        for _ in range(80):
+            tasks = await self.backend.list_tasks_for_execution(exec_id)
+            root_task = next((t for t in tasks if t.kind == "orchestrator"), None)
+            if root_task and root_task.retries == 1 and root_task.state == "pending":
+                pending_retry_seen = True
+                scheduled_for = root_task.scheduled_for
+                self.assertIsNotNone(scheduled_for)
+                self.assertIsNone(root_task.lease_expires_at)
+                if scheduled_for is None:
+                    self.fail("scheduled_for should be set for retry delay")
+                self.assertGreater(scheduled_for.timestamp(), datetime.now().timestamp())
+                await asyncio.sleep(0.15)
+                root_task_after = await self.backend.get_task(root_task.id)
+                self.assertIsNotNone(root_task_after)
+                if root_task_after is None:
+                    self.fail("Task unexpectedly missing")
+                self.assertEqual(root_task_after.state, "pending")
+                break
+            await asyncio.sleep(0.05)
+
+        self.assertTrue(pending_retry_seen, "Did not observe task in delayed retry pending state")
+
+        result = await self.executor.wait_for(exec_id, expiry=10.0)
+        self.assertEqual(result.or_raise(), 2)
+
+    async def test_idempotency_reuses_falsey_results(self):
+        cases = [
+            ("zero", 0),
+            ("false", False),
+            ("empty-str", ""),
+            ("empty-list", []),
+            ("empty-dict", {}),
+        ]
+
+        for case_id, value in cases:
+            FALSEY_IDEMPOTENT_COUNTER[case_id] = 0
+
+            first_exec = await self.executor.dispatch(falsey_idempotent_workflow, case_id, value)
+            first_result = await self.executor.wait_for(first_exec, expiry=5.0)
+            self.assertEqual(first_result.or_raise(), value)
+
+            second_exec = await self.executor.dispatch(falsey_idempotent_workflow, case_id, value)
+            second_result = await self.executor.wait_for(second_exec, expiry=5.0)
+            self.assertEqual(second_result.or_raise(), value)
+
+            self.assertEqual(FALSEY_IDEMPOTENT_COUNTER[case_id], 1)
+
     async def test_replay_dead_letter(self):
         key = str(uuid.uuid4())
         exec_id = await self.executor.dispatch(flaky_once_task, key)
@@ -188,7 +279,9 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(replayed_id, letters[0].id)
         result = await self.executor.wait_for(exec_id, expiry=5.0)
         self.assertTrue(result.ok)
-        self.assertIn("ok-", result.value)
+        value = result.or_raise()
+        self.assertIsInstance(value, str)
+        self.assertIn("ok-", value)
         self.assertEqual(await self.executor.list_dead_letters(), [])
 
     async def test_queue_and_tags_filtering(self):
@@ -237,6 +330,53 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         except asyncio.CancelledError:
             pass
         await lp_executor.shutdown()
+
+    async def test_worker_tags_filtering(self):
+        # Stop default worker so only explicitly configured workers consume tasks.
+        self.worker_task.cancel()
+        try:
+            await self.worker_task
+        except asyncio.CancelledError:
+            pass
+        await self.executor.shutdown()
+
+        alpha_exec_id = await self.executor.dispatch(alpha_tagged_task, "A")
+        beta_exec_id = await self.executor.dispatch(beta_tagged_task, "B")
+        untagged_exec_id = await self.executor.dispatch(untagged_task, "U")
+
+        alpha_executor = Senpuki(backend=self.backend)
+        alpha_worker_task = asyncio.create_task(alpha_executor.serve(tags=["alpha"], poll_interval=0.1))
+
+        try:
+            alpha_result = await self._wait_for_result(alpha_exec_id)
+            self.assertEqual(alpha_result.value, "alpha:A")
+
+            untagged_result = await self._wait_for_result(untagged_exec_id)
+            self.assertEqual(untagged_result.value, "untagged:U")
+
+            beta_state = await self.executor.state_of(beta_exec_id)
+            self.assertEqual(beta_state.state, "pending")
+        finally:
+            alpha_worker_task.cancel()
+            try:
+                await alpha_worker_task
+            except asyncio.CancelledError:
+                pass
+            await alpha_executor.shutdown()
+
+        beta_executor = Senpuki(backend=self.backend)
+        beta_worker_task = asyncio.create_task(beta_executor.serve(tags=["beta"], poll_interval=0.1))
+
+        try:
+            beta_result = await self._wait_for_result(beta_exec_id)
+            self.assertEqual(beta_result.value, "beta:B")
+        finally:
+            beta_worker_task.cancel()
+            try:
+                await beta_worker_task
+            except asyncio.CancelledError:
+                pass
+            await beta_executor.shutdown()
 
     async def test_lease_expiration_crash(self):
         RECOVERY_TEST_STATE["first_run"] = True
@@ -400,6 +540,8 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         # Verify pending is present
         rec_pending = await self.backend.get_execution(exec_pending_id)
         self.assertIsNotNone(rec_pending)
+        if rec_pending is None:
+            self.fail("Pending execution should still exist")
         self.assertEqual(rec_pending.state, "pending")
 
 
