@@ -45,7 +45,7 @@ class RedisBackend(NotificationBackend):
                         async for item in _listen():
                             yield item
                 except asyncio.TimeoutError:
-                    pass
+                    raise
             else:
                  async for item in _listen():
                      yield item
@@ -84,7 +84,7 @@ class RedisBackend(NotificationBackend):
                         async for item in _listen():
                             yield item
                 except asyncio.TimeoutError:
-                    pass
+                    raise
             else:
                  async for item in _listen():
                      yield item
