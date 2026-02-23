@@ -130,7 +130,7 @@ async def no_retry_operation():
 ```python
 from stent import Result
 
-@Stent.durable()
+@Stent.durable
 async def safe_activity(data: dict) -> Result[dict, str]:
     try:
         result = await risky_operation(data)
@@ -138,7 +138,7 @@ async def safe_activity(data: dict) -> Result[dict, str]:
     except Exception as e:
         return Result.Error(str(e))
 
-@Stent.durable()
+@Stent.durable
 async def orchestrator_with_result(items: list) -> Result[list, str]:
     results = []
     
@@ -159,7 +159,7 @@ async def orchestrator_with_result(items: list) -> Result[list, str]:
 ### Using Try/Except
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def orchestrator_with_exceptions(data: dict) -> dict:
     try:
         step1 = await first_step(data)
@@ -184,7 +184,7 @@ async def orchestrator_with_exceptions(data: dict) -> dict:
 import asyncio
 from stent import Result
 
-@Stent.durable()
+@Stent.durable
 async def batch_with_partial_failure(items: list[dict]) -> Result[dict, None]:
     tasks = [process_item(item) for item in items]
     
@@ -346,7 +346,7 @@ exec_id = await executor.dispatch(
 ### Simple Compensation
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def workflow_with_cleanup(data: dict) -> Result[dict, str]:
     resource = None
     
@@ -369,7 +369,7 @@ async def workflow_with_cleanup(data: dict) -> Result[dict, str]:
 ### Saga Pattern
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def distributed_transaction(order: dict) -> Result[dict, str]:
     compensations = []
     
@@ -476,7 +476,7 @@ from stent import install_structured_logging
 # Add Stent context to all logs
 install_structured_logging(logging.getLogger())
 
-@Stent.durable()
+@Stent.durable
 async def logged_operation(data: dict) -> dict:
     logger.info("Processing started", extra={"data_id": data["id"]})
     # Logs will include stent_execution_id, stent_task_id
@@ -495,7 +495,7 @@ async def test_workflow_handles_failure():
     async def failing_activity():
         raise ValueError("Expected failure")
     
-    @Stent.durable()
+    @Stent.durable
     async def workflow():
         try:
             await failing_activity()

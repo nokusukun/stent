@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import contextlib
 import functools
 import uuid
 import logging
@@ -60,13 +61,15 @@ class ExpiryError(TimeoutError):
 
 
 class UnregisteredFunctionError(RuntimeError):
-    def __init__(self, function_name: str):
-        message = (
+    def __init__(self, function_name: str, available: list[str] | None = None):
+        lines = [
             f"No durable registration found for '{function_name}'. "
-            "Decorate the function with @Stent.durable() or register it on the "
+            "Decorate the function with @Stent.durable or register it on the "
             "FunctionRegistry provided to the executor."
-        )
-        super().__init__(message)
+        ]
+        if available:
+            lines.append(f"Registered functions: {', '.join(sorted(available))}")
+        super().__init__("\n".join(lines))
         self.function_name = function_name
 
 @dataclass
@@ -255,6 +258,49 @@ class Stent:
         """Clear the default executor (useful for test teardown)."""
         cls._default_executor = None
 
+    @classmethod
+    @contextlib.asynccontextmanager
+    async def bootstrap(
+        cls,
+        backend: Backend,
+        *,
+        serve: bool = False,
+        poll_interval: float = 0.1,
+        **kwargs,
+    ):
+        """One-liner setup: init DB, configure default executor, optionally start worker.
+
+        Usage::
+
+            async with Stent.bootstrap(backend) as executor:
+                result = await my_task(42)
+
+            # Or with a worker:
+            async with Stent.bootstrap(backend, serve=True) as executor:
+                result = await my_task(42)
+        """
+        await backend.init_db()
+        executor = cls.use(backend=backend, **kwargs)
+        worker: asyncio.Task | None = None
+        try:
+            if serve:
+                worker = asyncio.create_task(executor.serve(poll_interval=poll_interval))
+                # Wait for worker to be ready
+                lifecycle = executor._default_worker_lifecycle
+                if lifecycle:
+                    await lifecycle.wait_until_ready()
+            yield executor
+        finally:
+            if worker:
+                worker.cancel()
+                try:
+                    await worker
+                except asyncio.CancelledError:
+                    pass
+            await executor.shutdown()
+            await backend.close()
+            cls.reset()
+
     def __init__(
         self,
         backend: Backend,
@@ -321,6 +367,22 @@ class Stent:
         caller can coordinate readiness / draining signals with their host.
         """
         return WorkerLifecycle(name=name)
+
+    async def wait_until_ready(self) -> None:
+        """Block until at least one worker signals readiness.
+
+        Useful after calling ``serve()`` in a background task::
+
+            worker = asyncio.create_task(executor.serve())
+            await executor.wait_until_ready()
+        """
+        while True:
+            for lc in self._active_worker_lifecycles:
+                if lc.ready_event.is_set():
+                    return
+            if self._default_worker_lifecycle and self._default_worker_lifecycle.ready_event.is_set():
+                return
+            await _original_sleep(0.01)
 
     def active_worker_lifecycles(self) -> List[WorkerLifecycle]:
         return list(self._active_worker_lifecycles)
@@ -411,6 +473,7 @@ class Stent:
     @classmethod
     def durable(
         cls,
+        fn: Callable[..., Awaitable[Any]] | None = None,
         *,
         cached: bool = False,
         retry_policy: RetryPolicy | None = None,
@@ -422,6 +485,16 @@ class Stent:
         version: str | None = None,
         max_concurrent: int | None = None,
     ):
+        """Register a function as durable.
+
+        Can be used with or without parentheses::
+
+            @Stent.durable
+            async def my_task(): ...
+
+            @Stent.durable(retry_policy=RetryPolicy(max_attempts=5))
+            async def my_task(): ...
+        """
         def decorator(fn):
             reg = cls.default_registry
             name = reg.name_for_function(fn)
@@ -440,6 +513,10 @@ class Stent:
             )
             reg.register(meta)
             return DurableFunction(meta)
+
+        if fn is not None:
+            # Called as @Stent.durable without parens
+            return decorator(fn)
         return decorator
 
     @classmethod
@@ -452,7 +529,7 @@ class Stent:
          name = reg.name_for_function(fn)
          meta = reg.get(name)
          if not meta:
-             raise UnregisteredFunctionError(name)
+             raise UnregisteredFunctionError(name, [n for n in dict(reg.items())])
 
          return await cls._call_durable_stub(meta, args, kwargs)
 
@@ -478,7 +555,7 @@ class Stent:
         name = reg.name_for_function(fn)
         meta = reg.get(name)
         if not meta:
-            raise UnregisteredFunctionError(name)
+            raise UnregisteredFunctionError(name, [n for n in dict(reg.items())])
 
         return await execute_map_batch(
             executor=executor,
@@ -629,7 +706,7 @@ class Stent:
         name = reg.name_for_function(fn)
         meta = reg.get(name)
         if not meta:
-            raise UnregisteredFunctionError(name)
+            raise UnregisteredFunctionError(name, [n for n in dict(reg.items())])
 
         normalized_expiry, normalized_delay = normalize_dispatch_timing(
             expiry=expiry,
@@ -831,6 +908,34 @@ class Stent:
         )
 
         return await self.result_of(execution_id)
+
+    async def cancel(self, execution_id: str) -> None:
+        """Request cancellation of a running or pending execution.
+
+        Sets the execution state to ``cancelled`` and marks all pending/running
+        tasks as ``failed`` so workers stop processing them.
+        """
+        record = await self.backend.get_execution(execution_id)
+        if not record:
+            raise ValueError(f"Execution {execution_id} not found")
+        if record.state in ("completed", "failed", "cancelled"):
+            return  # Already terminal
+
+        record.state = "cancelled"
+        record.completed_at = datetime.now()
+        record.error = self.serializer.dumps(Exception("Execution cancelled"))
+        await self.backend.update_execution(record)
+
+        tasks = await self.backend.list_tasks_for_execution(execution_id)
+        for task in tasks:
+            if task.state in ("pending", "running"):
+                task.state = "failed"
+                task.completed_at = datetime.now()
+                task.error = self.serializer.dumps(Exception("Execution cancelled"))
+                await self.backend.update_task(task)
+
+        if self.notification_backend:
+            await self.notification_backend.notify_execution_updated(execution_id, "cancelled")
 
     async def list_executions(self, limit: int = 10, offset: int = 0, state: str | None = None) -> List[ExecutionState]:
         """

@@ -30,7 +30,7 @@ executor = Stent(
 | `function_registry` | `FunctionRegistry \| None` | `None` | Custom function registry (uses global default if None) |
 | `metrics` | `MetricsRecorder \| None` | `None` | Metrics recorder for monitoring |
 
-## @Stent.durable() Decorator
+## @Stent.durable Decorator
 
 ```python
 @Stent.durable(

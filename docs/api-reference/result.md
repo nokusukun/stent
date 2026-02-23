@@ -25,17 +25,11 @@ class Result(Generic[T, E]):
 Create a successful result.
 
 ```python
-@classmethod
-def Ok(cls, value: T) -> Result[T, E]:
-```
-
-#### Example
-
-```python
 result = Result.Ok(42)
 print(result.ok)     # True
 print(result.value)  # 42
 print(result.error)  # None
+print(bool(result))  # True
 ```
 
 ### `Result.Error(error)`
@@ -43,27 +37,21 @@ print(result.error)  # None
 Create an error result.
 
 ```python
-@classmethod
-def Error(cls, error: E) -> Result[T, E]:
-```
-
-#### Example
-
-```python
 result = Result.Error("Something went wrong")
 print(result.ok)     # False
 print(result.value)  # None
 print(result.error)  # "Something went wrong"
+print(bool(result))  # False
 ```
 
 ## Instance Methods
 
-### `or_raise()`
+### `unwrap()`
 
 Extract the value or raise an exception if error.
 
 ```python
-def or_raise(self) -> T:
+def unwrap(self) -> T:
 ```
 
 #### Behavior
@@ -75,17 +63,93 @@ def or_raise(self) -> T:
 #### Example
 
 ```python
-# Success case
-result = Result.Ok(42)
-value = result.or_raise()  # Returns 42
+Result.Ok(42).unwrap()                          # Returns 42
+Result.Error(ValueError("bad")).unwrap()         # Raises ValueError
+Result.Error("Something went wrong").unwrap()    # Raises Exception
+```
 
-# Error case with exception
-result = Result.Error(ValueError("Invalid input"))
-result.or_raise()  # Raises ValueError("Invalid input")
+### `or_raise()`
 
-# Error case with string
-result = Result.Error("Something went wrong")
-result.or_raise()  # Raises Exception("Something went wrong")
+Alias for `unwrap()`.
+
+```python
+value = result.or_raise()  # Same as result.unwrap()
+```
+
+### `unwrap_or(default)`
+
+Return the value if ok, otherwise return `default`.
+
+```python
+def unwrap_or(self, default: T) -> T:
+```
+
+#### Example
+
+```python
+Result.Ok(42).unwrap_or(0)       # 42
+Result.Error("err").unwrap_or(0)  # 0
+```
+
+### `map(fn)`
+
+Apply a function to the value if ok, pass through errors unchanged.
+
+```python
+def map(self, fn: Callable[[T], U]) -> Result[U, E]:
+```
+
+#### Example
+
+```python
+Result.Ok(5).map(lambda x: x * 2)       # Result.Ok(10)
+Result.Error("err").map(lambda x: x * 2) # Result.Error("err")
+
+# Chain transforms
+result = (
+    Result.Ok(42)
+    .map(str)
+    .map(lambda s: f"value: {s}")
+)
+# Result.Ok("value: 42")
+```
+
+### `flat_map(fn)`
+
+Apply a function that returns a Result to the value if ok, pass through errors unchanged.
+
+```python
+def flat_map(self, fn: Callable[[T], Result[U, E]]) -> Result[U, E]:
+```
+
+#### Example
+
+```python
+def safe_divide(x):
+    if x == 0:
+        return Result.Error("division by zero")
+    return Result.Ok(100 / x)
+
+Result.Ok(5).flat_map(safe_divide)   # Result.Ok(20.0)
+Result.Ok(0).flat_map(safe_divide)   # Result.Error("division by zero")
+Result.Error("err").flat_map(safe_divide)  # Result.Error("err")
+```
+
+### `__bool__()`
+
+Results are truthy when ok, falsy when error. Note: `Result.Ok(0)` and `Result.Ok("")` are still truthy.
+
+```python
+if result:
+    print("success")
+else:
+    print("error")
+
+# Falsey values are still truthy Results
+bool(Result.Ok(0))     # True
+bool(Result.Ok(""))    # True
+bool(Result.Ok(None))  # True
+bool(Result.Error(0))  # False
 ```
 
 ## Usage Patterns
@@ -93,20 +157,6 @@ result.or_raise()  # Raises Exception("Something went wrong")
 ### Basic Pattern Matching
 
 ```python
-@Stent.durable()
-async def process_order(order_id: str) -> Result[dict, str]:
-    order = await fetch_order(order_id)
-    
-    if order is None:
-        return Result.Error(f"Order {order_id} not found")
-    
-    if order["status"] == "cancelled":
-        return Result.Error("Cannot process cancelled order")
-    
-    processed = await do_processing(order)
-    return Result.Ok(processed)
-
-# Caller
 result = await process_order("ORD-123")
 
 if result.ok:
@@ -115,54 +165,35 @@ else:
     print(f"Error: {result.error}")
 ```
 
-### With Exception Errors
+### Chaining with map/flat_map
 
 ```python
-@Stent.durable()
-async def divide(a: int, b: int) -> Result[float, Exception]:
-    try:
-        return Result.Ok(a / b)
-    except Exception as e:
-        return Result.Error(e)
-
-result = await divide(10, 0)
-
-if not result.ok:
-    # error is the actual ZeroDivisionError
-    print(f"Division failed: {result.error}")
+@Stent.durable
+async def workflow() -> Result:
+    return (
+        await fetch_user("user-123")
+    ).flat_map(
+        lambda user: await create_order(user)
+    ).map(
+        lambda order: order["id"]
+    )
 ```
 
-### Chaining Results
+### Unwrap with Default
 
 ```python
-@Stent.durable()
-async def workflow() -> Result[str, Exception]:
-    # Each step returns a Result
-    user_result = await fetch_user("user-123")
-    if not user_result.ok:
-        return user_result  # Propagate error
-    
-    order_result = await create_order(user_result.value)
-    if not order_result.ok:
-        return order_result  # Propagate error
-    
-    payment_result = await process_payment(order_result.value)
-    if not payment_result.ok:
-        return payment_result  # Propagate error
-    
-    return Result.Ok(f"Order {order_result.value['id']} completed")
+# Get value or use a default
+count = result.unwrap_or(0)
+name = result.unwrap_or("anonymous")
 ```
 
 ### Converting to Exceptions
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def main_workflow():
     result = await might_fail()
-    
-    # Convert Result to exception if needed
-    value = result.or_raise()
-    
+    value = result.unwrap()  # Raises if error
     # Continue with value...
 ```
 
@@ -189,82 +220,27 @@ Use proper generic type hints for better IDE support:
 ```python
 from stent import Result
 
-# Result with int value and str error
 async def divide(a: int, b: int) -> Result[int, str]:
     if b == 0:
         return Result.Error("Division by zero")
     return Result.Ok(a // b)
 
-# Result with complex types
 async def process_users(ids: list[str]) -> Result[list[dict], Exception]:
-    ...
-
-# Result in orchestrator return
-@Stent.durable()
-async def main_workflow(data: dict) -> Result[dict, Exception]:
     ...
 ```
 
 ## Comparison with Exceptions
-
-### Using Result
-
-```python
-@Stent.durable()
-async def process_with_result() -> Result[str, str]:
-    data = await fetch_data()
-    if not data:
-        return Result.Error("No data found")
-    
-    processed = await transform(data)
-    if not processed:
-        return Result.Error("Transform failed")
-    
-    return Result.Ok(processed)
-
-# Caller must handle both cases explicitly
-result = await process_with_result()
-if result.ok:
-    do_something(result.value)
-else:
-    handle_error(result.error)
-```
-
-### Using Exceptions
-
-```python
-@Stent.durable()
-async def process_with_exceptions() -> str:
-    data = await fetch_data()
-    if not data:
-        raise ValueError("No data found")
-    
-    processed = await transform(data)
-    if not processed:
-        raise RuntimeError("Transform failed")
-    
-    return processed
-
-# Caller can use try/except or let exceptions propagate
-try:
-    value = await process_with_exceptions()
-    do_something(value)
-except (ValueError, RuntimeError) as e:
-    handle_error(e)
-```
 
 ### When to Use Each
 
 **Use `Result` when:**
 - You want explicit error handling at each step
 - Errors are expected and part of normal control flow
-- You want better type safety for error types
-- You're composing many operations that can fail
+- You want to chain transforms with `map`/`flat_map`
 
 **Use Exceptions when:**
 - Errors are exceptional and unexpected
 - You want errors to propagate automatically
-- You're interacting with code that uses exceptions
 - Simpler is better for your use case
 
-Both approaches work well with Stent - use whichever fits your coding style and requirements.
+Both approaches work well with Stent.

@@ -11,17 +11,17 @@ In Stent, you'll write two types of durable functions:
 Activities perform actual work - they have side effects and interact with external systems:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def send_email(to: str, subject: str, body: str) -> bool:
     # Actual side effect: sends an email
     return await email_client.send(to, subject, body)
 
-@Stent.durable()
+@Stent.durable
 async def charge_payment(customer_id: str, amount: int) -> str:
     # Actual side effect: charges payment
     return await payment_gateway.charge(customer_id, amount)
 
-@Stent.durable()
+@Stent.durable
 async def update_database(record_id: str, data: dict) -> bool:
     # Actual side effect: updates database
     await db.update(record_id, data)
@@ -33,7 +33,7 @@ async def update_database(record_id: str, data: dict) -> bool:
 Orchestrators coordinate activities and define workflow logic:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def order_workflow(order: dict) -> Result[dict, Exception]:
     # Step 1: Validate
     validated = await validate_order(order)
@@ -64,7 +64,7 @@ async def order_workflow(order: dict) -> Result[dict, Exception]:
 Activities are executed in sequence when you `await` them one after another:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def sequential_workflow(data: dict) -> dict:
     # Each step waits for the previous to complete
     step1_result = await first_step(data)
@@ -78,7 +78,7 @@ async def sequential_workflow(data: dict) -> dict:
 Use standard Python conditionals:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def conditional_workflow(order: dict) -> Result[str, str]:
     # Check order type
     if order["type"] == "express":
@@ -102,7 +102,7 @@ async def conditional_workflow(order: dict) -> Result[str, str]:
 Use standard Python loops:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def batch_workflow(items: list[dict]) -> dict:
     results = []
     errors = []
@@ -126,7 +126,7 @@ async def batch_workflow(items: list[dict]) -> dict:
 You can implement custom retry logic in orchestrators:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def workflow_with_retry(data: dict) -> Result[dict, str]:
     max_retries = 3
     
@@ -148,14 +148,14 @@ async def workflow_with_retry(data: dict) -> Result[dict, str]:
 Orchestrators can call other orchestrators:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def payment_workflow(order_id: str, customer_id: str, amount: int) -> dict:
     # Sub-workflow handles all payment logic
     authorization = await authorize_payment(customer_id, amount)
     capture = await capture_payment(authorization["auth_id"])
     return {"payment_id": capture["id"], "status": "captured"}
 
-@Stent.durable()
+@Stent.durable
 async def order_workflow(order: dict) -> Result[dict, Exception]:
     # Validate first
     await validate_order(order)
@@ -187,7 +187,7 @@ async def order_workflow(order: dict) -> Result[dict, Exception]:
 Use `Stent.sleep()` for delays that don't block workers:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def scheduled_workflow(notification_id: str) -> None:
     # Send immediate notification
     await send_notification(notification_id, "Starting process")
@@ -210,7 +210,7 @@ async def scheduled_workflow(notification_id: str) -> None:
 Use signals for human-in-the-loop or external event workflows:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def approval_workflow(request: dict) -> Result[dict, str]:
     # Send approval request
     await notify_approvers(request["id"], request["approvers"])
@@ -242,7 +242,7 @@ await executor.send_signal(
 Combine signals with timeouts:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def approval_with_timeout(request: dict) -> Result[dict, str]:
     await notify_approvers(request["id"], request["approvers"])
     
@@ -274,7 +274,7 @@ async def approval_with_timeout(request: dict) -> Result[dict, str]:
 ### Try/Except in Orchestrators
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def robust_workflow(data: dict) -> Result[dict, str]:
     try:
         result = await risky_operation(data)
@@ -298,7 +298,7 @@ async def robust_workflow(data: dict) -> Result[dict, str]:
 For distributed transactions, implement compensation:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def booking_saga(trip: dict) -> Result[dict, str]:
     compensations = []
     
@@ -341,7 +341,7 @@ Orchestrators should be deterministic - the same inputs should produce the same 
 ### Do
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def deterministic_workflow(order: dict) -> dict:
     # Good: Logic depends only on input
     if order["total"] > 1000:
@@ -359,7 +359,7 @@ async def deterministic_workflow(order: dict) -> dict:
 ### Don't
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def non_deterministic_workflow(order: dict) -> dict:
     # Bad: Different result on replay
     import random
@@ -382,18 +382,18 @@ async def non_deterministic_workflow(order: dict) -> dict:
 
 ```python
 # Wrap non-deterministic operations in activities
-@Stent.durable()
+@Stent.durable
 async def get_random_value() -> float:
     import random
     return random.random()
 
-@Stent.durable()
+@Stent.durable
 async def get_current_time() -> str:
     from datetime import datetime
     return datetime.now().isoformat()
 
 # Use in orchestrator
-@Stent.durable()
+@Stent.durable
 async def workflow() -> dict:
     random_val = await get_random_value()  # Stored, replayed consistently
     timestamp = await get_current_time()   # Stored, replayed consistently

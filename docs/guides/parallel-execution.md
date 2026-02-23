@@ -19,13 +19,13 @@ The simplest way to run tasks in parallel:
 import asyncio
 from stent import Stent
 
-@Stent.durable()
+@Stent.durable
 async def process_item(item_id: str) -> dict:
     # Process a single item
     await asyncio.sleep(1)  # Simulate work
     return {"id": item_id, "processed": True}
 
-@Stent.durable()
+@Stent.durable
 async def parallel_workflow(item_ids: list[str]) -> list[dict]:
     # Schedule all tasks and wait for all to complete
     tasks = [process_item(item_id) for item_id in item_ids]
@@ -46,7 +46,7 @@ async def parallel_workflow(item_ids: list[str]) -> list[dict]:
 By default, `asyncio.gather` raises the first exception:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def workflow_fail_fast(items: list[str]) -> list[dict]:
     tasks = [process_item(item) for item in items]
     
@@ -61,7 +61,7 @@ async def workflow_fail_fast(items: list[str]) -> list[dict]:
 Use `return_exceptions=True` to capture all results:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def workflow_partial_success(items: list[str]) -> dict:
     tasks = [process_item(item) for item in items]
     
@@ -89,7 +89,7 @@ async def workflow_partial_success(items: list[str]) -> dict:
 For large batches, `Stent.map` is more efficient:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def batch_workflow(item_ids: list[str]) -> list[dict]:
     # Batch creates all tasks in fewer database operations
     results = await Stent.map(process_item, item_ids)
@@ -108,7 +108,7 @@ async def batch_workflow(item_ids: list[str]) -> list[dict]:
 ### Example: Processing 1000 Items
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def large_batch_workflow(item_ids: list[str]) -> dict:
     # With 1000 items, Stent.map is much faster
     # - Creates all tasks in batched DB operations
@@ -127,19 +127,19 @@ async def large_batch_workflow(item_ids: list[str]) -> dict:
 A common pattern for parallel processing:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def download_image(url: str) -> str:
     # Download and return local path
     path = f"/tmp/{hash(url)}.jpg"
     await http_client.download(url, path)
     return path
 
-@Stent.durable()
+@Stent.durable
 async def process_image(path: str) -> dict:
     # Process image and return metadata
     return await image_processor.analyze(path)
 
-@Stent.durable()
+@Stent.durable
 async def aggregate_results(results: list[dict]) -> dict:
     # Combine all results
     return {
@@ -147,7 +147,7 @@ async def aggregate_results(results: list[dict]) -> dict:
         "categories": list(set(r["category"] for r in results))
     }
 
-@Stent.durable()
+@Stent.durable
 async def image_pipeline(urls: list[str]) -> dict:
     # Fan-out: Download all images in parallel
     download_tasks = [download_image(url) for url in urls]
@@ -175,7 +175,7 @@ async def rate_limited_api_call(data: dict) -> dict:
     # Max 5 concurrent calls across ALL workers
     return await external_api.call(data)
 
-@Stent.durable()
+@Stent.durable
 async def workflow(items: list[dict]) -> list[dict]:
     # Even though we schedule all at once, only 5 run at a time
     tasks = [rate_limited_api_call(item) for item in items]
@@ -196,7 +196,7 @@ await executor.serve(max_concurrency=10)
 For fine-grained control:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def controlled_parallel(items: list[dict], batch_size: int = 10) -> list[dict]:
     all_results = []
     
@@ -219,14 +219,14 @@ async def controlled_parallel(items: list[dict], batch_size: int = 10) -> list[d
 Orchestrators can call other orchestrators in parallel:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def process_region(region: str, data: dict) -> dict:
     # This is itself an orchestrator with multiple steps
     validated = await validate_for_region(region, data)
     processed = await process_in_region(region, validated)
     return await finalize_region(region, processed)
 
-@Stent.durable()
+@Stent.durable
 async def multi_region_workflow(data: dict) -> dict:
     regions = ["us-east", "us-west", "eu-west", "ap-south"]
     
@@ -246,7 +246,7 @@ async def multi_region_workflow(data: dict) -> dict:
 Combine patterns as needed:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def complex_workflow(orders: list[dict]) -> dict:
     # Step 1: Validate all orders in parallel
     validation_tasks = [validate_order(order) for order in orders]
@@ -283,7 +283,7 @@ async def complex_workflow(orders: list[dict]) -> dict:
 ### Fail Fast (Default)
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def fail_fast_workflow(items: list) -> list:
     tasks = [process_item(item) for item in items]
     
@@ -295,7 +295,7 @@ async def fail_fast_workflow(items: list) -> list:
 ### Collect All Results
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def collect_all_workflow(items: list) -> dict:
     tasks = [process_item(item) for item in items]
     
@@ -314,7 +314,7 @@ async def collect_all_workflow(items: list) -> dict:
 ### Retry Failed Items
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def retry_failed_workflow(items: list) -> dict:
     results = await asyncio.gather(
         *[process_item(item) for item in items],
@@ -382,7 +382,7 @@ results = await asyncio.gather(*[big_task(i) for i in range(10000)])
 Consider streaming results for very large batches:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def streaming_workflow(items: list) -> int:
     processed = 0
     

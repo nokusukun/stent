@@ -50,11 +50,11 @@ async def process_order(order_id: str) -> dict:
 
 ```python
 # Stent - just decorated functions
-@Stent.durable()
+@Stent.durable
 async def process_order(order_id: str) -> dict:
     return {"order_id": order_id, "status": "done"}
 
-@Stent.durable()
+@Stent.durable
 async def order_workflow(order_id: str) -> dict:
     return await process_order(order_id)
 ```
@@ -89,7 +89,7 @@ def workflow():
 
 ```python
 # Stent - workflow resumes from last completed step
-@Stent.durable()
+@Stent.durable
 async def workflow():
     result1 = await step1()  # Completed and persisted
     result2 = await step2()  # Worker crashes, but on restart...
@@ -138,7 +138,7 @@ with DAG("etl_pipeline", schedule="@daily") as dag:
 
 ```python
 # Stent - regular async functions, triggered by events
-@Stent.durable()
+@Stent.durable
 async def process_order(order: dict) -> Result:
     validated = await validate_order(order)
     charged = await charge_payment(validated)
@@ -176,7 +176,7 @@ def orchestrator(context: df.DurableOrchestrationContext):
 
 ```python
 # Stent - native async, any infrastructure
-@Stent.durable()
+@Stent.durable
 async def orchestrator(input1):
     result1 = await step1(input1)
     result2 = await step2(result1)
@@ -214,7 +214,7 @@ class OrderService:
 
 ```python
 # Stent - pure Python, no external server
-@Stent.durable()
+@Stent.durable
 async def process_order(order: Order) -> Result:
     validated = await validate(order)  # Automatically durable
     return await charge(validated)

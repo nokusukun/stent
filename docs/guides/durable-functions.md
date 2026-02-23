@@ -1,19 +1,26 @@
 # Defining Durable Functions
 
-This guide covers everything you need to know about defining durable functions with the `@Stent.durable()` decorator.
+This guide covers everything you need to know about defining durable functions with the `@Stent.durable` decorator.
 
 ## Basic Definition
 
-Every function you want Stent to manage must be decorated with `@Stent.durable()`:
+Every function you want Stent to manage must be decorated with `@Stent.durable`:
 
 ```python
 from stent import Stent
 
-@Stent.durable()
+# Bare decorator (no options)
+@Stent.durable
 async def my_function(arg1: str, arg2: int) -> str:
-    # Your async code here
     return f"{arg1}: {arg2}"
+
+# With options — use parentheses
+@Stent.durable(cached=True, max_concurrent=5)
+async def my_cached_function(data: str) -> str:
+    return data.upper()
 ```
+
+Both forms are equivalent when no options are needed. Use whichever you prefer.
 
 ### Requirements
 
@@ -205,12 +212,12 @@ async def call_rate_limited_api(data: dict) -> dict:
 
 ### Automatic Registration
 
-Functions decorated with `@Stent.durable()` are automatically registered in the global registry:
+Functions decorated with `@Stent.durable` are automatically registered in the global registry:
 
 ```python
 from stent import Stent, registry
 
-@Stent.durable()
+@Stent.durable
 async def my_function():
     ...
 
@@ -225,7 +232,7 @@ Stent generates function names from the module and qualified name:
 
 ```python
 # In myapp/tasks.py
-@Stent.durable()
+@Stent.durable
 async def process_item():
     ...
 
@@ -233,7 +240,7 @@ async def process_item():
 
 # For nested classes
 class MyClass:
-    @Stent.durable()
+    @Stent.durable
     async def method(self):
         ...
 
@@ -289,7 +296,7 @@ The default JSON serializer supports:
 - `Exception` (serialized as message + class name)
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def json_compatible(
     name: str,
     count: int,
@@ -306,7 +313,7 @@ For complex Python objects, use pickle:
 ```python
 executor = Stent(backend=backend, serializer="pickle")
 
-@Stent.durable()
+@Stent.durable
 async def with_complex_args(
     df: pandas.DataFrame,
     model: sklearn.Model,
@@ -346,16 +353,16 @@ executor = Stent(backend=backend, serializer=MySerializer())
 
 ```python
 # Good: Single responsibility
-@Stent.durable()
+@Stent.durable
 async def fetch_user(user_id: str) -> dict:
     return await db.get_user(user_id)
 
-@Stent.durable()
+@Stent.durable
 async def send_email(email: str, subject: str, body: str) -> bool:
     return await email_client.send(email, subject, body)
 
 # Bad: Too many responsibilities
-@Stent.durable()
+@Stent.durable
 async def fetch_user_and_send_email_and_update_stats(...):
     ...
 ```
@@ -397,7 +404,7 @@ async def validate_input(data: dict):
 
 ```python
 # Bad: Not idempotent
-@Stent.durable()
+@Stent.durable
 async def increment_counter(counter_id: str):
     await db.execute("UPDATE counters SET value = value + 1 WHERE id = ?", counter_id)
 

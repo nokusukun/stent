@@ -18,14 +18,14 @@ Batch processing involves:
 from stent import Stent, Result
 import asyncio
 
-@Stent.durable()
+@Stent.durable
 async def process_item(item_id: int) -> dict:
     """Process a single item."""
     # Simulate processing
     await asyncio.sleep(0.1)
     return {"id": item_id, "status": "processed"}
 
-@Stent.durable()
+@Stent.durable
 async def batch_workflow(item_ids: list[int]) -> Result[dict, str]:
     """Process all items in a batch."""
     # Fan-out: Process all items in parallel
@@ -64,7 +64,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-@Stent.durable()
+@Stent.durable
 async def download_image(image_id: int) -> str:
     """Download an image and return local path."""
     # Simulate network latency
@@ -79,7 +79,7 @@ async def download_image(image_id: int) -> str:
     logger.info(f"Downloaded image {image_id} to {path}")
     return path
 
-@Stent.durable()
+@Stent.durable
 async def process_image(path: str) -> str:
     """Process an image (resize, convert, etc.)."""
     await asyncio.sleep(0.2)  # Simulate CPU work
@@ -87,7 +87,7 @@ async def process_image(path: str) -> str:
     logger.info(f"Processed {path} -> {processed_path}")
     return processed_path
 
-@Stent.durable()
+@Stent.durable
 async def create_gallery(image_paths: list[str]) -> str:
     """Create a gallery from processed images."""
     await asyncio.sleep(0.5)
@@ -99,7 +99,7 @@ async def create_gallery(image_paths: list[str]) -> str:
 ### Define the Batch Orchestrator
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def image_batch_workflow(image_ids: list[int]) -> Result[str, str]:
     """
     Process a batch of images:
@@ -144,7 +144,7 @@ async def image_batch_workflow(image_ids: list[int]) -> Result[str, str]:
 For very large datasets, process in chunks to avoid memory issues and enable progress tracking:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def chunked_batch_workflow(
     item_ids: list[int],
     chunk_size: int = 100
@@ -195,7 +195,7 @@ async def chunked_batch_workflow(
 For large batches, `Stent.map` provides optimized batch scheduling:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def efficient_batch_workflow(item_ids: list[int]) -> Result[dict, str]:
     """Use Stent.map for efficient batch processing."""
     
@@ -227,7 +227,7 @@ async def rate_limited_api_call(item_id: int) -> dict:
     """Max 5 concurrent calls to this API."""
     return await external_api.process(item_id)
 
-@Stent.durable()
+@Stent.durable
 async def rate_limited_batch(item_ids: list[int]) -> Result[list, str]:
     """Process batch with rate limiting."""
     
@@ -245,7 +245,7 @@ async def rate_limited_batch(item_ids: list[int]) -> Result[list, str]:
 For more control over rate limiting:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def manually_rate_limited_batch(
     item_ids: list[int],
     batch_size: int = 10,
@@ -278,7 +278,7 @@ async def manually_rate_limited_batch(
 Process all items even if some fail:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def resilient_batch(item_ids: list[int]) -> Result[dict, str]:
     """Process all items, collecting failures separately."""
     tasks = [process_item(item_id) for item_id in item_ids]
@@ -315,7 +315,7 @@ async def resilient_batch(item_ids: list[int]) -> Result[dict, str]:
 ### Retry Failed Items
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def batch_with_retry(
     item_ids: list[int],
     max_retries: int = 2
@@ -364,7 +364,7 @@ from stent import install_structured_logging
 
 install_structured_logging(logging.getLogger())
 
-@Stent.durable()
+@Stent.durable
 async def monitored_batch(item_ids: list[int]) -> Result[dict, str]:
     """Batch with detailed progress logging."""
     total = len(item_ids)
@@ -421,7 +421,7 @@ async def monitored_batch(item_ids: list[int]) -> Result[dict, str]:
 For very long batches, save progress to enable resume:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def resumable_batch(
     batch_id: str,
     item_ids: list[int]
@@ -485,22 +485,22 @@ async def resumable_batch(
 Process data through multiple transformation stages:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def extract_data(source_id: str) -> dict:
     """Extract raw data from source."""
     return await data_extractor.extract(source_id)
 
-@Stent.durable()
+@Stent.durable
 async def transform_data(raw_data: dict) -> dict:
     """Transform raw data."""
     return await data_transformer.transform(raw_data)
 
-@Stent.durable()
+@Stent.durable
 async def load_data(transformed_data: dict) -> str:
     """Load data to destination."""
     return await data_loader.load(transformed_data)
 
-@Stent.durable()
+@Stent.durable
 async def etl_pipeline(source_ids: list[str]) -> Result[dict, str]:
     """
     ETL pipeline:
@@ -620,7 +620,7 @@ async def idempotent_process(item_id: int) -> dict:
 ### 6. Clean Up Resources
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def batch_with_cleanup(item_ids: list[int]) -> Result[dict, str]:
     """Clean up temporary resources after batch."""
     temp_files = []

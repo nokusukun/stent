@@ -37,14 +37,14 @@ import asyncio
 from stent import Stent, Result
 
 # Define a durable activity
-@Stent.durable()
+@Stent.durable
 async def process_order(order_id: str) -> dict:
     # Simulate processing
     await asyncio.sleep(1)
     return {"order_id": order_id, "status": "processed"}
 
 # Define an orchestrator workflow
-@Stent.durable()
+@Stent.durable
 async def order_workflow(order_ids: list[str]) -> Result[list[dict], Exception]:
     results = []
     for order_id in order_ids:

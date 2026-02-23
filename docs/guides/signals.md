@@ -34,7 +34,7 @@ Use `Stent.wait_for_signal()` in a workflow to pause and wait for an external si
 ```python
 from stent import Stent, Result
 
-@Stent.durable()
+@Stent.durable
 async def approval_workflow(request_id: str) -> Result[dict, str]:
     # Send notification that approval is needed
     await notify_approvers(request_id)
@@ -109,7 +109,7 @@ async def approve_request(
 Signals can be sent before the workflow starts waiting:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def workflow_with_delay():
     # Do some work first
     await long_running_task()  # Takes 5 minutes
@@ -164,7 +164,7 @@ await executor.send_signal(exec_id, "form_submitted", {
 ### Human Approval Workflow
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def purchase_approval(purchase: dict) -> Result[dict, str]:
     # Determine required approval level
     if purchase["amount"] > 10000:
@@ -189,7 +189,7 @@ async def purchase_approval(purchase: dict) -> Result[dict, str]:
 ### Multi-Step Approval
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def multi_step_approval(document: dict) -> Result[str, str]:
     stages = ["legal_review", "finance_review", "executive_approval"]
     
@@ -209,7 +209,7 @@ async def multi_step_approval(document: dict) -> Result[str, str]:
 ### Event-Driven Processing
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def order_fulfillment(order_id: str) -> dict:
     # Wait for payment confirmation from payment gateway
     payment = await Stent.wait_for_signal("payment_confirmed")
@@ -242,7 +242,7 @@ Combine signals with timeouts:
 ```python
 import asyncio
 
-@Stent.durable()
+@Stent.durable
 async def approval_with_timeout(request_id: str) -> Result[dict, str]:
     await notify_approvers(request_id)
     
@@ -279,7 +279,7 @@ async def approval_with_timeout(request_id: str) -> Result[dict, str]:
 
 ```python
 # Workflow that processes webhook events
-@Stent.durable()
+@Stent.durable
 async def webhook_processor(webhook_config: dict) -> dict:
     results = []
     
@@ -323,7 +323,7 @@ await Stent.wait_for_signal("data")
 ### 2. Validate Signal Payloads
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def workflow_with_validation():
     signal = await Stent.wait_for_signal("user_input")
     
@@ -378,7 +378,7 @@ async def send_signal_endpoint(execution_id: str, signal: SignalRequest):
 ### 5. Log Signal Activity
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def audited_workflow(request_id: str):
     await log_audit_event(request_id, "waiting_for_approval")
     

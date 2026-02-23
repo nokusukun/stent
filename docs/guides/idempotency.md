@@ -316,7 +316,7 @@ async def process_large_data(data_hash: str) -> dict:
 ### 5. Handle Cache Misses Gracefully
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def workflow_with_caching():
     # First call computes result
     result1 = await expensive_computation("hash-1")

@@ -139,7 +139,7 @@ async def critical_operation():
 async def background_job():
     ...
 
-@Stent.durable()  # Default queue
+@Stent.durable  # Default queue
 async def normal_task():
     ...
 ```

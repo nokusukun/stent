@@ -4,7 +4,7 @@ This document explains the fundamental concepts in Stent that you need to unders
 
 ## Durable Functions
 
-A **durable function** is a Python async function decorated with `@Stent.durable()`. The decorator transforms the function into a task that can be:
+A **durable function** is a Python async function decorated with `@Stent.durable`. The decorator transforms the function into a task that can be:
 
 - Persisted to a database
 - Distributed across workers
@@ -14,7 +14,7 @@ A **durable function** is a Python async function decorated with `@Stent.durable
 ```python
 from stent import Stent
 
-@Stent.durable()
+@Stent.durable
 async def my_durable_function(x: int, y: int) -> int:
     return x + y
 ```
@@ -36,7 +36,7 @@ Stent distinguishes between two types of durable functions:
 An **orchestrator** is a durable function that coordinates other durable functions. It defines the workflow logic.
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def order_workflow(order_id: str) -> Result[dict, Exception]:
     # This is an orchestrator - it calls other durable functions
     customer = await fetch_customer(order_id)
@@ -218,7 +218,7 @@ Stent provides a Rust-inspired `Result` type for explicit error handling:
 ```python
 from stent import Result
 
-@Stent.durable()
+@Stent.durable
 async def divide(a: int, b: int) -> Result[float, str]:
     if b == 0:
         return Result.Error("Division by zero")
@@ -241,13 +241,18 @@ ok_result = Result.Ok(42)
 error_result = Result.Error("Something went wrong")
 
 # Checking status
-if result.ok:
+if result:  # Result is truthy when ok
     value = result.value
 else:
     error = result.error
 
-# Converting to exception (raises if error)
-value = result.or_raise()
+# Unwrap (raises if error)
+value = result.unwrap()      # or result.or_raise()
+value = result.unwrap_or(0)  # with default
+
+# Transform
+doubled = result.map(lambda x: x * 2)
+chained = result.flat_map(lambda x: Result.Ok(x + 1))
 ```
 
 ### Why Use Result?
@@ -255,12 +260,12 @@ value = result.or_raise()
 1. **Explicit error handling** - Errors are values, not exceptions
 2. **Type safety** - The type system tracks error possibilities
 3. **Serialization** - Results serialize cleanly to JSON/pickle
-4. **Composability** - Easy to chain and transform
+4. **Composability** - Chain transforms with `map()` and `flat_map()`
 
 You can still use regular exceptions if you prefer:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def might_fail():
     if random.random() < 0.5:
         raise ValueError("Random failure")

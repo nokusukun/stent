@@ -1,11 +1,12 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Generic, TypeVar, Any, Literal, Optional, List
+from typing import Generic, TypeVar, Any, Callable, Literal, Optional, List
 import random
 
 T = TypeVar("T")
 E = TypeVar("E")
+U = TypeVar("U")
 
 @dataclass
 class Result(Generic[T, E]):
@@ -14,19 +15,45 @@ class Result(Generic[T, E]):
     error: E | None
 
     @classmethod
-    def Ok(cls, value: T) -> "Result[T, E]":
+    def Ok(cls, value: T) -> Result[T, E]:
         return cls(ok=True, value=value, error=None)
 
     @classmethod
-    def Error(cls, error: E) -> "Result[T, E]":
+    def Error(cls, error: E) -> Result[T, E]:
         return cls(ok=False, value=None, error=error)
 
-    def or_raise(self) -> T:
+    def unwrap(self) -> T:
+        """Return the value or raise the error. Alias: ``or_raise()``."""
         if not self.ok:
             if isinstance(self.error, BaseException):
                 raise self.error
             raise Exception(self.error)
         return self.value  # type: ignore
+
+    def or_raise(self) -> T:
+        """Alias for :meth:`unwrap`."""
+        return self.unwrap()
+
+    def unwrap_or(self, default: T) -> T:  # type: ignore[assignment]
+        """Return the value if ok, otherwise *default*."""
+        if self.ok:
+            return self.value  # type: ignore
+        return default
+
+    def map(self, fn: Callable[[T], U]) -> Result[U, E]:
+        """Apply *fn* to the value if ok, pass through errors."""
+        if self.ok:
+            return Result.Ok(fn(self.value))  # type: ignore
+        return Result.Error(self.error)  # type: ignore
+
+    def flat_map(self, fn: Callable[[T], Result[U, E]]) -> Result[U, E]:
+        """Apply *fn* (returning a Result) to the value if ok, pass through errors."""
+        if self.ok:
+            return fn(self.value)  # type: ignore
+        return Result.Error(self.error)  # type: ignore
+
+    def __bool__(self) -> bool:
+        return self.ok
 
 @dataclass
 class RetryPolicy:

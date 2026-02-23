@@ -29,7 +29,7 @@ A saga consists of:
 ```python
 from stent import Stent, Result
 
-@Stent.durable()
+@Stent.durable
 async def saga_workflow(data: dict) -> Result[dict, str]:
     compensations = []
     
@@ -72,7 +72,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Forward actions
-@Stent.durable()
+@Stent.durable
 async def book_flight(trip_id: str, destination: str) -> str:
     """Book a flight and return confirmation number."""
     # Call flight booking API
@@ -80,14 +80,14 @@ async def book_flight(trip_id: str, destination: str) -> str:
     logger.info(f"Flight booked for {trip_id}: {confirmation}")
     return confirmation
 
-@Stent.durable()
+@Stent.durable
 async def book_hotel(trip_id: str, destination: str, nights: int) -> str:
     """Book a hotel and return reservation ID."""
     reservation = await hotel_api.reserve(destination, nights)
     logger.info(f"Hotel booked for {trip_id}: {reservation}")
     return reservation
 
-@Stent.durable()
+@Stent.durable
 async def book_car(trip_id: str, destination: str, days: int) -> str:
     """Book a rental car and return rental ID."""
     rental = await car_api.rent(destination, days)
@@ -95,21 +95,21 @@ async def book_car(trip_id: str, destination: str, days: int) -> str:
     return rental
 
 # Compensating actions
-@Stent.durable()
+@Stent.durable
 async def cancel_flight(trip_id: str, confirmation: str) -> bool:
     """Cancel a flight booking."""
     await flight_api.cancel(confirmation)
     logger.warning(f"Flight cancelled for {trip_id}: {confirmation}")
     return True
 
-@Stent.durable()
+@Stent.durable
 async def cancel_hotel(trip_id: str, reservation: str) -> bool:
     """Cancel a hotel reservation."""
     await hotel_api.cancel(reservation)
     logger.warning(f"Hotel cancelled for {trip_id}: {reservation}")
     return True
 
-@Stent.durable()
+@Stent.durable
 async def cancel_car(trip_id: str, rental: str) -> bool:
     """Cancel a car rental."""
     await car_api.cancel(rental)
@@ -120,7 +120,7 @@ async def cancel_car(trip_id: str, rental: str) -> bool:
 ### Define the Saga Orchestrator
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def trip_booking_saga(
     trip_id: str,
     destination: str,
@@ -250,7 +250,7 @@ async def cancel_payment(payment_id: str) -> bool:
 ### 3. Dead Letter Queue for Manual Resolution
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def saga_with_dlq_awareness(data: dict) -> Result[dict, str]:
     compensations = []
     
@@ -290,7 +290,7 @@ async def saga_with_dlq_awareness(data: dict) -> Result[dict, str]:
 When steps are independent, run them in parallel:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def parallel_saga(order: dict) -> Result[dict, str]:
     compensations = []
     
@@ -338,7 +338,7 @@ async def parallel_saga(order: dict) -> Result[dict, str]:
 Sagas can call other sagas:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def create_account_saga(user: dict) -> Result[dict, str]:
     compensations = []
     
@@ -396,7 +396,7 @@ async def cancel_booking(booking_id: str) -> bool:
 For debugging and auditing:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def audited_saga(order: dict) -> Result[dict, str]:
     saga_id = str(uuid.uuid4())
     
@@ -441,7 +441,7 @@ exec_id = await executor.dispatch(
 Sometimes you want to proceed with partial results:
 
 ```python
-@Stent.durable()
+@Stent.durable
 async def flexible_saga(items: list) -> Result[dict, str]:
     succeeded = []
     failed = []
