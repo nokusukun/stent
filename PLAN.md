@@ -1,4 +1,4 @@
-# Senpuki Hardening Plan - v2 (Post-Initial Hardening)
+# Stent Hardening Plan - v2 (Post-Initial Hardening)
 
 This plan addresses remaining issues identified in `REVIEW.md` (v2). The critical issues from v1 have been resolved; this phase focuses on polish, performance, and code quality.
 
@@ -13,7 +13,7 @@ This plan addresses remaining issues identified in `REVIEW.md` (v2). The critica
 ## Phase 1 — HIGH Priority Fixes (3-5 days)
 
 ### 1.1 SQLite Connection Pooling
-**Files**: `senpuki/backend/sqlite.py`
+**Files**: `stent/backend/sqlite.py`
 
 **Current**: Opens new connection per operation
 **Target**: Persistent connection or small pool
@@ -30,7 +30,7 @@ This plan addresses remaining issues identified in `REVIEW.md` (v2). The critica
 ---
 
 ### 1.2 Postgres Pool Lifecycle
-**Files**: `senpuki/backend/postgres.py`
+**Files**: `stent/backend/postgres.py`
 
 **Tasks**:
 - [ ] Add `async def close(self)` to close pool
@@ -43,7 +43,7 @@ This plan addresses remaining issues identified in `REVIEW.md` (v2). The critica
 ---
 
 ### 1.3 Clock Skew Documentation & Mitigation
-**Files**: `senpuki/executor.py`, docs
+**Files**: `stent/executor.py`, docs
 
 **Tasks**:
 - [ ] Add production documentation requiring NTP sync
@@ -59,7 +59,7 @@ This plan addresses remaining issues identified in `REVIEW.md` (v2). The critica
 ## Phase 2 — Type Safety & Code Quality (2-3 days)
 
 ### 2.1 Fix executor.py Type Errors
-**Files**: `senpuki/executor.py`
+**Files**: `stent/executor.py`
 
 **Tasks**:
 - [ ] Fix `bytes | None` passed to `loads()` - add null checks
@@ -84,7 +84,7 @@ else:
 ---
 
 ### 2.2 Fix postgres.py Type Errors
-**Files**: `senpuki/backend/postgres.py`
+**Files**: `stent/backend/postgres.py`
 
 **Tasks**:
 - [ ] Fix `PoolConnectionProxy` vs `Connection` type hints
@@ -95,7 +95,7 @@ else:
 ---
 
 ### 2.3 Fix telemetry.py Optional Import
-**Files**: `senpuki/telemetry.py`
+**Files**: `stent/telemetry.py`
 
 **Tasks**:
 - [ ] Properly handle optional opentelemetry import for type checker
@@ -126,7 +126,7 @@ except ImportError:
 ## Phase 3 — Exception Handling & Serialization (1-2 days)
 
 ### 3.1 Improve Exception Serialization
-**Files**: `senpuki/utils/serialization.py`
+**Files**: `stent/utils/serialization.py`
 
 **Tasks**:
 - [*] Include traceback in JSON-serialized exceptions
@@ -149,7 +149,7 @@ except ImportError:
 ---
 
 ### 3.2 RetryPolicy.retry_for Serialization
-**Files**: `senpuki/utils/serialization.py`, `senpuki/backend/utils.py`
+**Files**: `stent/utils/serialization.py`, `stent/backend/utils.py`
 
 **Tasks**:
 - [*] Serialize `retry_for` as list of class names
@@ -164,7 +164,7 @@ except ImportError:
 ## Phase 4 — Operability Polish (1-2 days)
 
 ### 4.1 Dead Letter Cleanup
-**Files**: `senpuki/backend/sqlite.py`, `senpuki/backend/postgres.py`, `senpuki/backend/base.py`
+**Files**: `stent/backend/sqlite.py`, `stent/backend/postgres.py`, `stent/backend/base.py`
 
 **Tasks**:
 - [ ] Add `cleanup_dead_letters(older_than: datetime) -> int` to Backend protocol
@@ -176,7 +176,7 @@ except ImportError:
 ---
 
 ### 4.2 Progress Table Management
-**Files**: `senpuki/backend/sqlite.py`, `senpuki/backend/postgres.py`
+**Files**: `stent/backend/sqlite.py`, `stent/backend/postgres.py`
 
 **Tasks**:
 - [ ] Add progress retention option (max entries per execution)
@@ -188,7 +188,7 @@ except ImportError:
 ---
 
 ### 4.3 CLI Improvements
-**Files**: `senpuki/cli.py`
+**Files**: `stent/cli.py`
 
 **Tasks**:
 - [ ] Add explicit `--backend sqlite|postgres` flag
@@ -224,7 +224,7 @@ except ImportError:
 ## Phase 6 — Code Quality (Optional, 2-3 days)
 
 ### 6.1 Backend Refactoring
-**Files**: `senpuki/backend/sqlite.py`, `senpuki/backend/postgres.py`
+**Files**: `stent/backend/sqlite.py`, `stent/backend/postgres.py`
 
 **Tasks**:
 - [ ] Extract shared row-mapping logic to `backend/utils.py`

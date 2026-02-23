@@ -1,7 +1,7 @@
 # Post-Hardening Principal Review (v2)
 
 ## Description
-Comprehensive principal engineer review of the Senpuki library after the v1 hardening work. This review assesses production readiness and identifies remaining issues for the v2 hardening phase.
+Comprehensive principal engineer review of the Stent library after the v1 hardening work. This review assesses production readiness and identifies remaining issues for the v2 hardening phase.
 
 ## Key Changes
 * Verified all critical fixes from v1 review are implemented:
@@ -45,17 +45,17 @@ Comprehensive principal engineer review of the Senpuki library after the v1 hard
 Total estimated: 8-13 days for recommended scope
 
 ## Files Reviewed
-* `senpuki/executor.py` - 1517 lines (7 type errors)
-* `senpuki/backend/sqlite.py` - 658 lines
-* `senpuki/backend/postgres.py` - 631 lines (3 type errors)
-* `senpuki/telemetry.py` - 83 lines (14 type errors)
-* `senpuki/core.py` - 159 lines
-* `senpuki/registry.py` - 42 lines
-* `senpuki/metrics.py` - 60 lines
-* `senpuki/notifications/redis.py` - 93 lines
-* `senpuki/utils/serialization.py` - 76 lines
-* `senpuki/backend/utils.py` - 113 lines
-* `senpuki/cli.py` - 136 lines
+* `stent/executor.py` - 1517 lines (7 type errors)
+* `stent/backend/sqlite.py` - 658 lines
+* `stent/backend/postgres.py` - 631 lines (3 type errors)
+* `stent/telemetry.py` - 83 lines (14 type errors)
+* `stent/core.py` - 159 lines
+* `stent/registry.py` - 42 lines
+* `stent/metrics.py` - 60 lines
+* `stent/notifications/redis.py` - 93 lines
+* `stent/utils/serialization.py` - 76 lines
+* `stent/backend/utils.py` - 113 lines
+* `stent/cli.py` - 136 lines
 
 ## Archived Documents
 * `documents/REVIEW-v1-initial-hardening.md` - Original review findings

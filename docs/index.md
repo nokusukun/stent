@@ -1,10 +1,10 @@
-# Senpuki
+# Stent
 
 **Distributed Durable Functions for Python**
 
-Senpuki is a lightweight, asynchronous, distributed task orchestration library for Python. It enables you to write stateful, reliable workflows ("durable functions") using standard Python async/await syntax while Senpuki handles the complexity of persisting state, retrying failures, and distributing work across a pool of workers.
+Stent is a lightweight, asynchronous, distributed task orchestration library for Python. It enables you to write stateful, reliable workflows ("durable functions") using standard Python async/await syntax while Stent handles the complexity of persisting state, retrying failures, and distributing work across a pool of workers.
 
-## Why Senpuki?
+## Why Stent?
 
 Modern distributed systems require workflows that can:
 
@@ -13,7 +13,7 @@ Modern distributed systems require workflows that can:
 - **Handle long-running operations** - Support workflows that run for hours, days, or weeks
 - **Maintain consistency** - Ensure exactly-once semantics for critical operations
 
-Senpuki provides all of this while letting you write normal Python async functions.
+Stent provides all of this while letting you write normal Python async functions.
 
 ## Key Features
 
@@ -21,7 +21,7 @@ Senpuki provides all of this while letting you write normal Python async functio
 - **Automatic Retries** - Configurable retry policies with exponential backoff and jitter
 - **Distributed Workers** - Scale horizontally by running multiple worker processes
 - **Durable Sleep** - Non-blocking waits that don't consume worker resources
-- **Parallel Execution** - Fan-out/fan-in patterns with `asyncio.gather` and `Senpuki.map`
+- **Parallel Execution** - Fan-out/fan-in patterns with `asyncio.gather` and `Stent.map`
 - **Rate Limiting** - Control concurrent executions per function across the cluster
 - **External Signals** - Coordinate workflows with external events
 - **Dead Letter Queue** - Inspect and replay failed tasks
@@ -34,17 +34,17 @@ Senpuki provides all of this while letting you write normal Python async functio
 
 ```python
 import asyncio
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 
 # Define a durable activity
-@Senpuki.durable()
+@Stent.durable()
 async def process_order(order_id: str) -> dict:
     # Simulate processing
     await asyncio.sleep(1)
     return {"order_id": order_id, "status": "processed"}
 
 # Define an orchestrator workflow
-@Senpuki.durable()
+@Stent.durable()
 async def order_workflow(order_ids: list[str]) -> Result[list[dict], Exception]:
     results = []
     for order_id in order_ids:
@@ -54,9 +54,9 @@ async def order_workflow(order_ids: list[str]) -> Result[list[dict], Exception]:
 
 async def main():
     # Setup
-    backend = Senpuki.backends.SQLiteBackend("workflow.db")
+    backend = Stent.backends.SQLiteBackend("workflow.db")
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Start worker
     worker = asyncio.create_task(executor.serve())
@@ -136,7 +136,7 @@ asyncio.run(main())
 
 ### Reference
 
-- [Senpuki API](api-reference/senpuki.md)
+- [Stent API](api-reference/stent.md)
 - [Result API](api-reference/result.md)
 - [RetryPolicy API](api-reference/retry-policy.md)
 - [Backends](api-reference/backends.md)
@@ -158,5 +158,5 @@ MIT License
 
 ## Links
 
-- [GitHub Repository](https://github.com/nokusukun/senpuki)
-- [Issue Tracker](https://github.com/nokusukun/senpuki/issues)
+- [GitHub Repository](https://github.com/nokusukun/stent)
+- [Issue Tracker](https://github.com/nokusukun/stent/issues)

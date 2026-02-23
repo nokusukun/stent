@@ -29,18 +29,18 @@ A signal is a named message sent to a running execution. Workflows can wait for 
 
 ## Waiting for Signals
 
-Use `Senpuki.wait_for_signal()` in a workflow to pause and wait for an external signal:
+Use `Stent.wait_for_signal()` in a workflow to pause and wait for an external signal:
 
 ```python
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 
-@Senpuki.durable()
+@Stent.durable()
 async def approval_workflow(request_id: str) -> Result[dict, str]:
     # Send notification that approval is needed
     await notify_approvers(request_id)
     
     # Wait for approval signal (this could be hours or days)
-    approval = await Senpuki.wait_for_signal("approval")
+    approval = await Stent.wait_for_signal("approval")
     
     if approval["approved"]:
         await process_approved_request(request_id)
@@ -75,7 +75,7 @@ await executor.send_signal(
 
 ```python
 from fastapi import FastAPI, HTTPException
-from senpuki import Senpuki
+from stent import Stent
 
 app = FastAPI()
 
@@ -109,14 +109,14 @@ async def approve_request(
 Signals can be sent before the workflow starts waiting:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow_with_delay():
     # Do some work first
     await long_running_task()  # Takes 5 minutes
     
     # Now wait for signal
     # If signal was sent during long_running_task, it's buffered
-    signal = await Senpuki.wait_for_signal("trigger")
+    signal = await Stent.wait_for_signal("trigger")
     
     await process_trigger(signal)
 ```
@@ -129,10 +129,10 @@ Signal names are strings that identify the signal type:
 
 ```python
 # Different signals for different events
-await Senpuki.wait_for_signal("approval")
-await Senpuki.wait_for_signal("payment_received")
-await Senpuki.wait_for_signal("document_uploaded")
-await Senpuki.wait_for_signal("user_action")
+await Stent.wait_for_signal("approval")
+await Stent.wait_for_signal("payment_received")
+await Stent.wait_for_signal("document_uploaded")
+await Stent.wait_for_signal("user_action")
 ```
 
 ### Signal Payload
@@ -164,7 +164,7 @@ await executor.send_signal(exec_id, "form_submitted", {
 ### Human Approval Workflow
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def purchase_approval(purchase: dict) -> Result[dict, str]:
     # Determine required approval level
     if purchase["amount"] > 10000:
@@ -177,7 +177,7 @@ async def purchase_approval(purchase: dict) -> Result[dict, str]:
     await send_approval_emails(request_id, approvers)
     
     # Wait for approval
-    response = await Senpuki.wait_for_signal("approval_response")
+    response = await Stent.wait_for_signal("approval_response")
     
     if response["approved"]:
         order_id = await create_purchase_order(purchase)
@@ -189,14 +189,14 @@ async def purchase_approval(purchase: dict) -> Result[dict, str]:
 ### Multi-Step Approval
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def multi_step_approval(document: dict) -> Result[str, str]:
     stages = ["legal_review", "finance_review", "executive_approval"]
     
     for stage in stages:
         await notify_stage_reviewers(document["id"], stage)
         
-        response = await Senpuki.wait_for_signal(f"{stage}_complete")
+        response = await Stent.wait_for_signal(f"{stage}_complete")
         
         if not response["approved"]:
             return Result.Error(f"Rejected at {stage}: {response['reason']}")
@@ -209,10 +209,10 @@ async def multi_step_approval(document: dict) -> Result[str, str]:
 ### Event-Driven Processing
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def order_fulfillment(order_id: str) -> dict:
     # Wait for payment confirmation from payment gateway
-    payment = await Senpuki.wait_for_signal("payment_confirmed")
+    payment = await Stent.wait_for_signal("payment_confirmed")
     
     if not payment["success"]:
         await cancel_order(order_id)
@@ -222,12 +222,12 @@ async def order_fulfillment(order_id: str) -> dict:
     await start_fulfillment(order_id)
     
     # Wait for shipping confirmation
-    shipping = await Senpuki.wait_for_signal("shipped")
+    shipping = await Stent.wait_for_signal("shipped")
     
     await notify_customer(order_id, shipping["tracking_number"])
     
     # Wait for delivery confirmation
-    delivery = await Senpuki.wait_for_signal("delivered")
+    delivery = await Stent.wait_for_signal("delivered")
     
     return {
         "status": "completed",
@@ -242,16 +242,16 @@ Combine signals with timeouts:
 ```python
 import asyncio
 
-@Senpuki.durable()
+@Stent.durable()
 async def approval_with_timeout(request_id: str) -> Result[dict, str]:
     await notify_approvers(request_id)
     
     # Create tasks for signal and timeout
     async def wait_for_approval():
-        return await Senpuki.wait_for_signal("approval")
+        return await Stent.wait_for_signal("approval")
     
     async def timeout_after(hours: int):
-        await Senpuki.sleep(f"{hours}h")
+        await Stent.sleep(f"{hours}h")
         return {"timed_out": True}
     
     # Wait for either
@@ -279,13 +279,13 @@ async def approval_with_timeout(request_id: str) -> Result[dict, str]:
 
 ```python
 # Workflow that processes webhook events
-@Senpuki.durable()
+@Stent.durable()
 async def webhook_processor(webhook_config: dict) -> dict:
     results = []
     
     while True:
         # Wait for next webhook event
-        event = await Senpuki.wait_for_signal("webhook_event")
+        event = await Stent.wait_for_signal("webhook_event")
         
         if event.get("type") == "terminate":
             break
@@ -310,22 +310,22 @@ async def handle_webhook(execution_id: str, event: dict):
 
 ```python
 # Good: Clear, specific names
-await Senpuki.wait_for_signal("manager_approval")
-await Senpuki.wait_for_signal("payment_gateway_response")
-await Senpuki.wait_for_signal("document_signature_complete")
+await Stent.wait_for_signal("manager_approval")
+await Stent.wait_for_signal("payment_gateway_response")
+await Stent.wait_for_signal("document_signature_complete")
 
 # Avoid: Generic names
-await Senpuki.wait_for_signal("event")
-await Senpuki.wait_for_signal("signal")
-await Senpuki.wait_for_signal("data")
+await Stent.wait_for_signal("event")
+await Stent.wait_for_signal("signal")
+await Stent.wait_for_signal("data")
 ```
 
 ### 2. Validate Signal Payloads
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow_with_validation():
-    signal = await Senpuki.wait_for_signal("user_input")
+    signal = await Stent.wait_for_signal("user_input")
     
     # Validate required fields
     if "user_id" not in signal:
@@ -378,11 +378,11 @@ async def send_signal_endpoint(execution_id: str, signal: SignalRequest):
 ### 5. Log Signal Activity
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def audited_workflow(request_id: str):
     await log_audit_event(request_id, "waiting_for_approval")
     
-    approval = await Senpuki.wait_for_signal("approval")
+    approval = await Stent.wait_for_signal("approval")
     
     await log_audit_event(
         request_id,

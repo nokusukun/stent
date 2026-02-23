@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable, Awaitable, Any, List, ItemsView
-from senpuki.core import RetryPolicy
+from stent.core import RetryPolicy
 
 @dataclass
 class FunctionMetadata:

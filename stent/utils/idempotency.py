@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from typing import Any # Import Any
-from senpuki.utils.serialization import Serializer, JsonSerializer
+from stent.utils.serialization import Serializer, JsonSerializer
 
 logger = logging.getLogger(__name__)
 

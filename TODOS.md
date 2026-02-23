@@ -1,6 +1,6 @@
-# Senpuki Project Roadmap & TODOS
+# Stent Project Roadmap & TODOS
 
-This document tracks planned improvements, feature requests, and architectural changes for the Senpuki durable execution framework.
+This document tracks planned improvements, feature requests, and architectural changes for the Stent durable execution framework.
 
 ## 1. Backends & Storage
 
@@ -17,10 +17,10 @@ This document tracks planned improvements, feature requests, and architectural c
 ## 2. Core Workflow Features
 
 ### Orchestration Patterns
-- [x] **Fan-out / Fan-in:** Implement a first-class `senpuki.gather()` or `senpuki.map()` to parallelize tasks efficiently and wait for all results.
+- [x] **Fan-out / Fan-in:** Implement a first-class `stent.gather()` or `stent.map()` to parallelize tasks efficiently and wait for all results.
 - [ ] **Child Workflows:** specialized API to start a workflow from within another and wait for its completion as a single atomic step (handling cancellation propagation).
-- [ ] **External Signals/Events:** API to pause a workflow until an external event (e.g., webhook, human approval) is received (`await senpuki.wait_for_signal("approval")`).
-- [ ] **Cron / Scheduled Triggers:** Native support for recurring workflows (e.g., `@Senpuki.durable(schedule="@daily")`).
+- [ ] **External Signals/Events:** API to pause a workflow until an external event (e.g., webhook, human approval) is received (`await stent.wait_for_signal("approval")`).
+- [ ] **Cron / Scheduled Triggers:** Native support for recurring workflows (e.g., `@Stent.durable(schedule="@daily")`).
 - [x] **Rate Limiting:** Global/Cluster-wide rate limiting for specific tasks or queues (e.g., "max 10/s for `send_email`") or `max_concurrent=2` for `use_gpu` that only allows n durable functions to run at a time.
 
 ### Advanced Logic
@@ -39,16 +39,16 @@ This document tracks planned improvements, feature requests, and architectural c
 - [ ] **Web Dashboard:** A UI to search executions, view their state (timeline/Gantt chart), inspect payloads, and retry/cancel manually.
 - [ ] **Structured Logging:** Switch to JSON logging by default for production environments.
 - [ ] **Metrics:** Emit Prometheus/StatsD metrics:
-    - `senpuki_tasks_started_total`
-    - `senpuki_tasks_failed_total`
-    - `senpuki_queue_depth`
-    - `senpuki_e2e_latency_seconds`
+    - `stent_tasks_started_total`
+    - `stent_tasks_failed_total`
+    - `stent_queue_depth`
+    - `stent_e2e_latency_seconds`
 - [*] **OpenTelemetry Tracing:** Instrument the executor to emit spans for each task/workflow, linking distributed traces across services.
-- [*] **CLI Tool:** A `senpuki` CLI for common ops:
-    - `senpuki list`
-    - `senpuki show <id>`
-    - `senpuki cancel <id>`
-    - `senpuki retry <id>`
+- [*] **CLI Tool:** A `stent` CLI for common ops:
+    - `stent list`
+    - `stent show <id>`
+    - `stent cancel <id>`
+    - `stent retry <id>`
 
 ## 5. Developer Experience
 

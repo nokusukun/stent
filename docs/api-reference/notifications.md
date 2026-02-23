@@ -1,6 +1,6 @@
 # Notifications API Reference
 
-Senpuki supports optional notification backends for low-latency task completion notifications. Without a notification backend, Senpuki uses polling to detect task completion.
+Stent supports optional notification backends for low-latency task completion notifications. Without a notification backend, Stent uses polling to detect task completion.
 
 ## Why Use Notifications?
 
@@ -52,22 +52,22 @@ The Redis backend uses Redis Pub/Sub for real-time notifications.
 
 ### Installation
 
-Redis support is included with Senpuki:
+Redis support is included with Stent:
 
 ```bash
-pip install senpuki
+pip install stent
 # redis package is included in dependencies
 ```
 
 ### Creation
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
-notification_backend = Senpuki.notifications.RedisBackend("redis://localhost:6379")
+notification_backend = Stent.notifications.RedisBackend("redis://localhost:6379")
 
-executor = Senpuki(
-    backend=Senpuki.backends.PostgresBackend(dsn),
+executor = Stent(
+    backend=Stent.backends.PostgresBackend(dsn),
     notification_backend=notification_backend
 )
 ```
@@ -82,19 +82,19 @@ Examples:
 
 ```python
 # Local Redis
-Senpuki.notifications.RedisBackend("redis://localhost:6379")
+Stent.notifications.RedisBackend("redis://localhost:6379")
 
 # With authentication
-Senpuki.notifications.RedisBackend("redis://:password@localhost:6379")
+Stent.notifications.RedisBackend("redis://:password@localhost:6379")
 
 # With database number
-Senpuki.notifications.RedisBackend("redis://localhost:6379/1")
+Stent.notifications.RedisBackend("redis://localhost:6379/1")
 
 # Redis Cluster (connection string)
-Senpuki.notifications.RedisBackend("redis://node1:6379,node2:6379,node3:6379")
+Stent.notifications.RedisBackend("redis://node1:6379,node2:6379,node3:6379")
 
 # Redis with SSL
-Senpuki.notifications.RedisBackend("rediss://localhost:6379")
+Stent.notifications.RedisBackend("rediss://localhost:6379")
 ```
 
 ### How It Works
@@ -107,7 +107,7 @@ Senpuki.notifications.RedisBackend("rediss://localhost:6379")
    notify_task_completed(task_id)
        |
        v
-   PUBLISH senpuki:task:{task_id} {"state": "completed"}
+   PUBLISH stent:task:{task_id} {"state": "completed"}
    ```
 
 2. **Orchestrator Waiting**:
@@ -118,7 +118,7 @@ Senpuki.notifications.RedisBackend("rediss://localhost:6379")
    subscribe_to_task(task_id)
        |
        v
-   SUBSCRIBE senpuki:task:{task_id}
+   SUBSCRIBE stent:task:{task_id}
        |
        v
    Receives message, continues execution
@@ -130,8 +130,8 @@ The Redis backend uses the following Pub/Sub channels:
 
 | Channel Pattern | Purpose |
 |----------------|---------|
-| `senpuki:task:{task_id}` | Task state updates |
-| `senpuki:execution:{execution_id}` | Execution state updates |
+| `stent:task:{task_id}` | Task state updates |
+| `stent:execution:{execution_id}` | Execution state updates |
 
 ### Message Format
 
@@ -157,17 +157,17 @@ The Redis backend uses the following Pub/Sub channels:
 
 ```python
 import asyncio
-from senpuki import Senpuki
+from stent import Stent
 
 async def main():
-    backend = Senpuki.backends.PostgresBackend(
-        "postgresql://user:pass@localhost/senpuki"
+    backend = Stent.backends.PostgresBackend(
+        "postgresql://user:pass@localhost/stent"
     )
     await backend.init_db()
     
-    executor = Senpuki(
+    executor = Stent(
         backend=backend,
-        notification_backend=Senpuki.notifications.RedisBackend(
+        notification_backend=Stent.notifications.RedisBackend(
             "redis://localhost:6379"
         )
     )
@@ -184,8 +184,8 @@ async def main():
 ### Without Notifications (Polling Fallback)
 
 ```python
-# When notification_backend is None, Senpuki uses adaptive polling
-executor = Senpuki(
+# When notification_backend is None, Stent uses adaptive polling
+executor = Stent(
     backend=backend,
     notification_backend=None,  # Default
     poll_min_interval=0.1,      # Start polling at 100ms
@@ -200,10 +200,10 @@ You can run without Redis and add it later:
 
 ```python
 # Development: no Redis needed
-executor = Senpuki(backend=sqlite_backend)
+executor = Stent(backend=sqlite_backend)
 
 # Production: add Redis for performance
-executor = Senpuki(
+executor = Stent(
     backend=postgres_backend,
     notification_backend=redis_backend
 )
@@ -239,7 +239,7 @@ For production, consider Redis Sentinel or Cluster:
 
 ```python
 # Using Redis Sentinel
-notification_backend = Senpuki.notifications.RedisBackend(
+notification_backend = Stent.notifications.RedisBackend(
     "redis://sentinel-host:26379/mymaster"
 )
 ```
@@ -328,6 +328,6 @@ class MyNotificationBackend:
 ### Requirements
 
 1. **Low latency**: Notifications should be delivered quickly
-2. **Reliable delivery**: Messages shouldn't be lost (though Senpuki falls back to polling)
+2. **Reliable delivery**: Messages shouldn't be lost (though Stent falls back to polling)
 3. **Proper cleanup**: Subscriptions should clean up on completion or timeout
 4. **Async support**: All methods must be async

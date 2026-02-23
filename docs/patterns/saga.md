@@ -27,9 +27,9 @@ A saga consists of:
 3. **Compensation stack** - Tracks which compensations to run
 
 ```python
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 
-@Senpuki.durable()
+@Stent.durable()
 async def saga_workflow(data: dict) -> Result[dict, str]:
     compensations = []
     
@@ -66,13 +66,13 @@ This example books a trip with flight, hotel, and car rental. If any step fails,
 ### Define Activities
 
 ```python
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 import logging
 
 logger = logging.getLogger(__name__)
 
 # Forward actions
-@Senpuki.durable()
+@Stent.durable()
 async def book_flight(trip_id: str, destination: str) -> str:
     """Book a flight and return confirmation number."""
     # Call flight booking API
@@ -80,14 +80,14 @@ async def book_flight(trip_id: str, destination: str) -> str:
     logger.info(f"Flight booked for {trip_id}: {confirmation}")
     return confirmation
 
-@Senpuki.durable()
+@Stent.durable()
 async def book_hotel(trip_id: str, destination: str, nights: int) -> str:
     """Book a hotel and return reservation ID."""
     reservation = await hotel_api.reserve(destination, nights)
     logger.info(f"Hotel booked for {trip_id}: {reservation}")
     return reservation
 
-@Senpuki.durable()
+@Stent.durable()
 async def book_car(trip_id: str, destination: str, days: int) -> str:
     """Book a rental car and return rental ID."""
     rental = await car_api.rent(destination, days)
@@ -95,21 +95,21 @@ async def book_car(trip_id: str, destination: str, days: int) -> str:
     return rental
 
 # Compensating actions
-@Senpuki.durable()
+@Stent.durable()
 async def cancel_flight(trip_id: str, confirmation: str) -> bool:
     """Cancel a flight booking."""
     await flight_api.cancel(confirmation)
     logger.warning(f"Flight cancelled for {trip_id}: {confirmation}")
     return True
 
-@Senpuki.durable()
+@Stent.durable()
 async def cancel_hotel(trip_id: str, reservation: str) -> bool:
     """Cancel a hotel reservation."""
     await hotel_api.cancel(reservation)
     logger.warning(f"Hotel cancelled for {trip_id}: {reservation}")
     return True
 
-@Senpuki.durable()
+@Stent.durable()
 async def cancel_car(trip_id: str, rental: str) -> bool:
     """Cancel a car rental."""
     await car_api.cancel(rental)
@@ -120,7 +120,7 @@ async def cancel_car(trip_id: str, rental: str) -> bool:
 ### Define the Saga Orchestrator
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def trip_booking_saga(
     trip_id: str,
     destination: str,
@@ -180,10 +180,10 @@ async def trip_booking_saga(
 
 ```python
 async def main():
-    backend = Senpuki.backends.SQLiteBackend("trips.sqlite")
+    backend = Stent.backends.SQLiteBackend("trips.sqlite")
     await backend.init_db()
     
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Start worker
     import asyncio
@@ -231,9 +231,9 @@ for compensate in reversed(compensations):
 For critical compensations that must succeed:
 
 ```python
-from senpuki import RetryPolicy
+from stent import RetryPolicy
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=10,
         initial_delay=1.0,
@@ -250,7 +250,7 @@ async def cancel_payment(payment_id: str) -> bool:
 ### 3. Dead Letter Queue for Manual Resolution
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def saga_with_dlq_awareness(data: dict) -> Result[dict, str]:
     compensations = []
     
@@ -283,14 +283,14 @@ async def saga_with_dlq_awareness(data: dict) -> Result[dict, str]:
 
 **Orchestration** (shown above): A central orchestrator coordinates all steps.
 
-**Choreography**: Each service publishes events, others react. Less common with Senpuki since orchestration is its strength.
+**Choreography**: Each service publishes events, others react. Less common with Stent since orchestration is its strength.
 
 ### Parallel Saga Steps
 
 When steps are independent, run them in parallel:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def parallel_saga(order: dict) -> Result[dict, str]:
     compensations = []
     
@@ -338,7 +338,7 @@ async def parallel_saga(order: dict) -> Result[dict, str]:
 Sagas can call other sagas:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def create_account_saga(user: dict) -> Result[dict, str]:
     compensations = []
     
@@ -378,7 +378,7 @@ async def create_account_saga(user: dict) -> Result[dict, str]:
 Compensations may run multiple times (due to retries). Ensure they're safe to repeat:
 
 ```python
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def cancel_booking(booking_id: str) -> bool:
     """Idempotent cancellation - safe to retry."""
     booking = await get_booking(booking_id)
@@ -396,7 +396,7 @@ async def cancel_booking(booking_id: str) -> bool:
 For debugging and auditing:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def audited_saga(order: dict) -> Result[dict, str]:
     saga_id = str(uuid.uuid4())
     
@@ -441,7 +441,7 @@ exec_id = await executor.dispatch(
 Sometimes you want to proceed with partial results:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def flexible_saga(items: list) -> Result[dict, str]:
     succeeded = []
     failed = []
@@ -488,9 +488,9 @@ from unittest.mock import AsyncMock, patch
 @pytest.mark.asyncio
 async def test_saga_success():
     """Test happy path."""
-    backend = Senpuki.backends.SQLiteBackend(":memory:")
+    backend = Stent.backends.SQLiteBackend(":memory:")
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Mock external APIs
     with patch('flight_api.book', return_value="FL123"):
@@ -516,9 +516,9 @@ async def test_saga_success():
 @pytest.mark.asyncio
 async def test_saga_compensation():
     """Test that compensation runs on failure."""
-    backend = Senpuki.backends.SQLiteBackend(":memory:")
+    backend = Stent.backends.SQLiteBackend(":memory:")
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     cancel_flight_called = False
     cancel_hotel_called = False

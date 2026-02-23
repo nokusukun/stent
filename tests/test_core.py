@@ -1,9 +1,9 @@
 import unittest
 import json
 from datetime import timedelta, timezone
-from senpuki.core import Result, RetryPolicy, compute_retry_delay
-from senpuki.utils.serialization import JsonSerializer
-from senpuki.utils.time import parse_duration, now_utc
+from stent.core import Result, RetryPolicy, compute_retry_delay
+from stent.utils.serialization import JsonSerializer
+from stent.utils.time import parse_duration, now_utc
 
 class TestCore(unittest.TestCase):
     def test_result_serialization(self):

@@ -4,7 +4,7 @@
 Continued P2.4 by extracting shared list/count query-builder helpers used by SQLite and Postgres for common filtered reads, while preserving backend-specific SQL execution semantics.
 
 ## Key Changes
-* `senpuki/backend/utils.py`
+* `stent/backend/utils.py`
   * Added reusable query helpers:
     * `build_filtered_query`
     * `build_filtered_count_query`
@@ -12,9 +12,9 @@ Continued P2.4 by extracting shared list/count query-builder helpers used by SQL
   * Added placeholder helpers for dialect-specific parameter tokens:
     * `qmark_placeholder` (SQLite)
     * `dollar_placeholder` (Postgres)
-* `senpuki/backend/sqlite.py`
+* `stent/backend/sqlite.py`
   * Switched `list_executions`, `count_executions`, `list_tasks`, and `count_tasks` to shared builders.
-* `senpuki/backend/postgres.py`
+* `stent/backend/postgres.py`
   * Switched `list_executions`, `count_executions`, `list_tasks`, and `count_tasks` to shared builders.
 
 ## Usage/Configuration

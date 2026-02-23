@@ -2,11 +2,11 @@
 
 ## Description
 
-Comprehensive overhaul of the Senpuki command-line interface, adding new commands for managing executions, tasks, dead-letter queues, and real-time monitoring. The CLI now provides colored output, better formatting, and a live watch mode.
+Comprehensive overhaul of the Stent command-line interface, adding new commands for managing executions, tasks, dead-letter queues, and real-time monitoring. The CLI now provides colored output, better formatting, and a live watch mode.
 
 ## Key Changes
 
-* `senpuki/cli.py` - Complete rewrite with new subcommands and formatting
+* `stent/cli.py` - Complete rewrite with new subcommands and formatting
   - Added ANSI color support with automatic Windows compatibility
   - Added `tasks list/show` for task inspection
   - Added `stats` for queue statistics and system overview
@@ -22,82 +22,82 @@ Comprehensive overhaul of the Senpuki command-line interface, adding new command
 
 ```bash
 # List executions
-senpuki list
-senpuki list --limit 50 --state running
+stent list
+stent list --limit 50 --state running
 
 # Show execution details
-senpuki show <execution-id>
+stent show <execution-id>
 
 # Show queue statistics
-senpuki stats
+stent stats
 
 # List/show tasks
-senpuki tasks list
-senpuki tasks list --state pending
-senpuki tasks show <task-id>
+stent tasks list
+stent tasks list --state pending
+stent tasks show <task-id>
 ```
 
 ### Dead-Letter Queue
 
 ```bash
 # List DLQ entries
-senpuki dlq list
+stent dlq list
 
 # Show details
-senpuki dlq show <task-id>
+stent dlq show <task-id>
 
 # Replay a failed task
-senpuki dlq replay <task-id>
-senpuki dlq replay <task-id> --queue high-priority
+stent dlq replay <task-id>
+stent dlq replay <task-id> --queue high-priority
 
 # Discard a task
-senpuki dlq discard <task-id> --force
+stent dlq discard <task-id> --force
 
 # Replay all failed tasks
-senpuki dlq replay-all --force
+stent dlq replay-all --force
 ```
 
 ### Cleanup
 
 ```bash
 # Clean up records older than 30 days (default)
-senpuki cleanup
+stent cleanup
 
 # Clean up records older than 7 days
-senpuki cleanup --days 7
+stent cleanup --days 7
 
 # Clean up only executions or DLQ
-senpuki cleanup --executions
-senpuki cleanup --dlq
+stent cleanup --executions
+stent cleanup --dlq
 
 # Dry run to see what would be deleted
-senpuki cleanup --dry-run
+stent cleanup --dry-run
 
 # Skip confirmation
-senpuki cleanup --days 7 --force
+stent cleanup --days 7 --force
 ```
 
 ### Signals
 
 ```bash
 # Send a simple signal
-senpuki signal <execution-id> approval_received
+stent signal <execution-id> approval_received
 
 # Send signal with payload
-senpuki signal <execution-id> user_input "some data"
+stent signal <execution-id> user_input "some data"
 
 # Send JSON payload
-senpuki signal <execution-id> config '{"enabled": true}' --json
+stent signal <execution-id> config '{"enabled": true}' --json
 ```
 
 ### Live Monitoring
 
 ```bash
 # Start watch mode (refreshes every 2 seconds)
-senpuki watch
+stent watch
 
 # Custom refresh interval
-senpuki watch --interval 5
+stent watch --interval 5
 
 # Note: Install 'rich' for enhanced watch UI
 pip install rich
@@ -107,21 +107,21 @@ pip install rich
 
 ```bash
 # Use environment variable
-export SENPUKI_DB=postgres://user:pass@localhost/senpuki
-senpuki list
+export STENT_DB=postgres://user:pass@localhost/stent
+stent list
 
 # Or command-line argument
-senpuki --db myapp.sqlite list
+stent --db myapp.sqlite list
 
 # Disable colors
-senpuki --no-color list
+stent --no-color list
 ```
 
 ## Output Examples
 
 ### Stats Command
 ```
-Senpuki Statistics
+Stent Statistics
 ==================================================
 
 Executions

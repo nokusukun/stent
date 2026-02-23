@@ -10,7 +10,7 @@ Adds the second phase of the hardening plan by keeping long-running work safely 
 
 ## Usage/Configuration
 ```python
-executor = Senpuki(
+executor = Stent(
     backend=backend,
     poll_min_interval=0.25,
     poll_max_interval=3.0,

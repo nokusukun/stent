@@ -2,21 +2,21 @@ import unittest
 import asyncio
 import os
 import logging
-from senpuki import Senpuki, Result, RetryPolicy
-from senpuki.registry import registry
+from stent import Stent, Result, RetryPolicy
+from stent.registry import registry
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 logging.basicConfig(level=logging.DEBUG)
 
 # Mock "LLM" Generation
-@Senpuki.durable()
+@Stent.durable()
 async def generate_text(prompt: str) -> str:
     # Simulate processing time
     # print(f"Executing generate_text for: {prompt}")
     await asyncio.sleep(0.5)
     return f"Generated text for: {prompt}"
 
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def get_cached_data(key: str) -> str:
     # print(f"Executing get_cached_data for: {key}")
     await asyncio.sleep(0.2) # Simulate work
@@ -25,12 +25,12 @@ async def get_cached_data(key: str) -> str:
 # Mock "Email" Notification (Side Effect)
 SENT_EMAILS = []
 
-@Senpuki.durable(idempotent=True) # Idempotent to avoid sending twice on retries of parent
+@Stent.durable(idempotent=True) # Idempotent to avoid sending twice on retries of parent
 async def send_email(recipient: str, body: str):
     SENT_EMAILS.append((recipient, body))
     return True
 
-@Senpuki.durable()
+@Stent.durable()
 async def llm_workflow(prompt: str, email: str) -> Result[str, Exception]:
     # Step 1: Generate
     text = await generate_text(prompt)
@@ -40,22 +40,22 @@ async def llm_workflow(prompt: str, email: str) -> Result[str, Exception]:
     
     return Result.Ok("Workflow Completed")
 
-@Senpuki.durable()
+@Stent.durable()
 async def parent_durable_task(value: int) -> Result[int, Exception]:
     # Calls another durable task
     res = await child_durable_task(value * 2)
     return Result.Ok(res + 1)
 
-@Senpuki.durable()
+@Stent.durable()
 async def child_durable_task(value: int) -> int:
     return value + 10
 
-@Senpuki.durable()
+@Stent.durable()
 async def step_sleep():
     await asyncio.sleep(0.5)
     return "slept"
 
-@Senpuki.durable()
+@Stent.durable()
 async def slow_chain_workflow():
     await step_sleep()
     await step_sleep()
@@ -67,7 +67,7 @@ class TestScenarios(unittest.IsolatedAsyncioTestCase):
         self.backend = get_test_backend(f"scenarios_{os.getpid()}")
         await self.backend.init_db()
         await clear_test_backend(self.backend)
-        self.executor = Senpuki(backend=self.backend)
+        self.executor = Stent(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
         SENT_EMAILS.clear()
 

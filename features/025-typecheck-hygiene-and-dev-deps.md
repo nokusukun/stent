@@ -7,10 +7,10 @@ Completed the typecheck hygiene pass for core package code and moved `pyrefly` o
 * `pyproject.toml`
   * Removed `pyrefly` from `[project].dependencies`.
   * Kept `pyrefly` under `[dependency-groups].dev`.
-* `senpuki/cli.py`
+* `stent/cli.py`
   * Adjusted Windows ANSI setup typing around `ctypes.windll` access.
   * Added explicit dict type annotations for stats counters.
-* `senpuki/executor.py`
+* `stent/executor.py`
   * Added explicit cast in orchestrator failure update path to satisfy static typing.
 * `tests/test_wait_for.py`
   * Added casts for test doubles/monkeypatches used by type checker.

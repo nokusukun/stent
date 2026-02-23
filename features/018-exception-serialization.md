@@ -6,7 +6,7 @@ Implements Phase 3 of the hardening plan, enhancing JSON serialization for excep
 
 ## Key Changes
 
-### `senpuki/utils/serialization.py`
+### `stent/utils/serialization.py`
 - Added `_EXCEPTION_REGISTRY` - a registry mapping exception class names to classes for deserialization
 - Added `register_exception()` function to register custom exception classes
 - Added `get_exception_class()` function to look up exception classes with fallback to `Exception`
@@ -18,7 +18,7 @@ Implements Phase 3 of the hardening plan, enhancing JSON serialization for excep
 - Added `_deserialize_exception()` to reconstruct exceptions with full fidelity
 - Added `_deserialize_retry_policy()` to reconstruct RetryPolicy including `retry_for`
 
-### `senpuki/backend/utils.py`
+### `stent/backend/utils.py`
 - Updated `_retry_policy_to_dict()` to include `retry_for` as list of class names
 - Updated `_retry_policy_from_dict()` to reconstruct `retry_for` using the exception registry
 
@@ -29,7 +29,7 @@ Implements Phase 3 of the hardening plan, enhancing JSON serialization for excep
 Exceptions are now serialized with full context:
 
 ```python
-from senpuki.utils.serialization import JsonSerializer
+from stent.utils.serialization import JsonSerializer
 
 serializer = JsonSerializer()
 
@@ -50,7 +50,7 @@ except ValueError as e:
 Register custom exceptions for proper deserialization:
 
 ```python
-from senpuki.utils.serialization import register_exception
+from stent.utils.serialization import register_exception
 
 class MyAppError(Exception):
     def __init__(self, msg, error_code):
@@ -68,8 +68,8 @@ register_exception(MyAppError)
 RetryPolicy now fully round-trips including `retry_for`:
 
 ```python
-from senpuki.core import RetryPolicy
-from senpuki.utils.serialization import JsonSerializer
+from stent.core import RetryPolicy
+from stent.utils.serialization import JsonSerializer
 
 serializer = JsonSerializer()
 

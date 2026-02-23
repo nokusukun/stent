@@ -1,10 +1,10 @@
 # Deployment Guide
 
-This guide covers deploying Senpuki applications in production environments.
+This guide covers deploying Stent applications in production environments.
 
 ## Architecture Overview
 
-A Senpuki deployment consists of:
+A Stent deployment consists of:
 
 1. **Database** - PostgreSQL (recommended) or SQLite for persistence
 2. **Workers** - Process that executes durable functions
@@ -39,24 +39,24 @@ A Senpuki deployment consists of:
 ### PostgreSQL (Recommended for Production)
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
 # Connection string
-dsn = "postgresql://user:password@host:5432/senpuki"
+dsn = "postgresql://user:password@host:5432/stent"
 
-backend = Senpuki.backends.PostgresBackend(dsn)
+backend = Stent.backends.PostgresBackend(dsn)
 await backend.init_db()
 
-executor = Senpuki(backend=backend)
+executor = Stent(backend=backend)
 ```
 
 **Recommended PostgreSQL settings:**
 
 ```sql
 -- Create database and user
-CREATE DATABASE senpuki;
-CREATE USER senpuki_app WITH PASSWORD 'secure_password';
-GRANT ALL PRIVILEGES ON DATABASE senpuki TO senpuki_app;
+CREATE DATABASE stent;
+CREATE USER stent_app WITH PASSWORD 'secure_password';
+GRANT ALL PRIVILEGES ON DATABASE stent TO stent_app;
 
 -- Performance tuning for workload
 ALTER SYSTEM SET max_connections = 200;
@@ -68,7 +68,7 @@ ALTER SYSTEM SET work_mem = '16MB';
 ### SQLite (Development/Small Scale)
 
 ```python
-backend = Senpuki.backends.SQLiteBackend("/data/senpuki.sqlite")
+backend = Stent.backends.SQLiteBackend("/data/stent.sqlite")
 await backend.init_db()
 ```
 
@@ -82,15 +82,15 @@ SQLite is suitable for:
 Redis provides real-time notifications for faster task completion detection:
 
 ```python
-notification_backend = Senpuki.notifications.RedisBackend("redis://localhost:6379")
+notification_backend = Stent.notifications.RedisBackend("redis://localhost:6379")
 
-executor = Senpuki(
+executor = Stent(
     backend=backend,
     notification_backend=notification_backend
 )
 ```
 
-Without Redis, Senpuki polls the database for task updates.
+Without Redis, Stent polls the database for task updates.
 
 ## Docker Deployment
 
@@ -121,13 +121,13 @@ services:
   postgres:
     image: postgres:15
     environment:
-      POSTGRES_DB: senpuki
-      POSTGRES_USER: senpuki
+      POSTGRES_DB: stent
+      POSTGRES_USER: stent
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U senpuki"]
+      test: ["CMD-SHELL", "pg_isready -U stent"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -144,7 +144,7 @@ services:
     build: .
     command: python -m myapp.worker
     environment:
-      DATABASE_URL: postgresql://senpuki:${DB_PASSWORD}@postgres:5432/senpuki
+      DATABASE_URL: postgresql://stent:${DB_PASSWORD}@postgres:5432/stent
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
@@ -160,7 +160,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://senpuki:${DB_PASSWORD}@postgres:5432/senpuki
+      DATABASE_URL: postgresql://stent:${DB_PASSWORD}@postgres:5432/stent
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
@@ -178,7 +178,7 @@ import asyncio
 import os
 import signal
 import logging
-from senpuki import Senpuki
+from stent import Stent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -192,15 +192,15 @@ async def main():
     redis_url = os.environ.get("REDIS_URL")
     
     # Initialize backends
-    backend = Senpuki.backends.PostgresBackend(database_url)
+    backend = Stent.backends.PostgresBackend(database_url)
     await backend.init_db()
     
     notification_backend = None
     if redis_url:
-        notification_backend = Senpuki.notifications.RedisBackend(redis_url)
+        notification_backend = Stent.notifications.RedisBackend(redis_url)
     
     # Create executor
-    executor = Senpuki(
+    executor = Stent(
         backend=backend,
         notification_backend=notification_backend
     )
@@ -239,18 +239,18 @@ if __name__ == "__main__":
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: senpuki-worker
+  name: stent-worker
   labels:
-    app: senpuki-worker
+    app: stent-worker
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: senpuki-worker
+      app: stent-worker
   template:
     metadata:
       labels:
-        app: senpuki-worker
+        app: stent-worker
     spec:
       terminationGracePeriodSeconds: 300  # 5 minutes for graceful shutdown
       containers:
@@ -261,12 +261,12 @@ spec:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              name: senpuki-secrets
+              name: stent-secrets
               key: database-url
         - name: REDIS_URL
           valueFrom:
             secretKeyRef:
-              name: senpuki-secrets
+              name: stent-secrets
               key: redis-url
         resources:
           requests:
@@ -297,9 +297,9 @@ Add a health check server to your worker:
 # myapp/worker.py
 import asyncio
 from aiohttp import web
-from senpuki import Senpuki
+from stent import Stent
 
-async def create_health_server(executor: Senpuki):
+async def create_health_server(executor: Stent):
     """Create health check HTTP server."""
     
     async def health_handler(request):
@@ -342,12 +342,12 @@ async def main():
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: senpuki-worker-hpa
+  name: stent-worker-hpa
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: senpuki-worker
+    name: stent-worker
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -366,19 +366,19 @@ For bare-metal or VM deployments:
 ### Service File
 
 ```ini
-# /etc/systemd/system/senpuki-worker.service
+# /etc/systemd/system/stent-worker.service
 [Unit]
-Description=Senpuki Worker
+Description=Stent Worker
 After=network.target postgresql.service redis.service
 
 [Service]
 Type=simple
-User=senpuki
-Group=senpuki
-WorkingDirectory=/opt/senpuki
-Environment="DATABASE_URL=postgresql://senpuki:password@localhost/senpuki"
+User=stent
+Group=stent
+WorkingDirectory=/opt/stent
+Environment="DATABASE_URL=postgresql://stent:password@localhost/stent"
 Environment="REDIS_URL=redis://localhost:6379"
-ExecStart=/opt/senpuki/venv/bin/python -m myapp.worker
+ExecStart=/opt/stent/venv/bin/python -m myapp.worker
 Restart=always
 RestartSec=5
 
@@ -399,26 +399,26 @@ WantedBy=multi-user.target
 
 ```bash
 # Create user
-sudo useradd -r -s /bin/false senpuki
+sudo useradd -r -s /bin/false stent
 
 # Setup application
-sudo mkdir -p /opt/senpuki
-sudo chown senpuki:senpuki /opt/senpuki
+sudo mkdir -p /opt/stent
+sudo chown stent:stent /opt/stent
 
 # Install
-cd /opt/senpuki
+cd /opt/stent
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
 # Enable and start
 sudo systemctl daemon-reload
-sudo systemctl enable senpuki-worker
-sudo systemctl start senpuki-worker
+sudo systemctl enable stent-worker
+sudo systemctl start stent-worker
 
 # Check status
-sudo systemctl status senpuki-worker
-sudo journalctl -u senpuki-worker -f
+sudo systemctl status stent-worker
+sudo journalctl -u stent-worker -f
 ```
 
 ## Scaling Strategies
@@ -429,7 +429,7 @@ Add more worker replicas:
 
 ```yaml
 # Kubernetes
-kubectl scale deployment senpuki-worker --replicas=10
+kubectl scale deployment stent-worker --replicas=10
 
 # Docker Compose
 docker-compose up -d --scale worker=10
@@ -485,7 +485,7 @@ await executor.serve(
 
 ### Cleanup Old Data
 
-Senpuki automatically cleans up completed executions:
+Stent automatically cleans up completed executions:
 
 ```python
 await executor.serve(
@@ -525,33 +525,33 @@ VACUUM ANALYZE executions;
 ### Prometheus Metrics
 
 ```python
-from senpuki.metrics import MetricsRecorder
+from stent.metrics import MetricsRecorder
 from prometheus_client import Counter, Histogram, Gauge, start_http_server
 
 class PrometheusMetrics(MetricsRecorder):
     def __init__(self):
         self.tasks_claimed = Counter(
-            'senpuki_tasks_claimed_total',
+            'stent_tasks_claimed_total',
             'Total tasks claimed',
             ['queue', 'step_name', 'kind']
         )
         self.tasks_completed = Counter(
-            'senpuki_tasks_completed_total',
+            'stent_tasks_completed_total',
             'Total tasks completed',
             ['queue', 'step_name', 'kind']
         )
         self.task_duration = Histogram(
-            'senpuki_task_duration_seconds',
+            'stent_task_duration_seconds',
             'Task execution duration',
             ['queue', 'step_name', 'kind']
         )
         self.tasks_failed = Counter(
-            'senpuki_tasks_failed_total',
+            'stent_tasks_failed_total',
             'Total tasks failed',
             ['queue', 'step_name', 'kind', 'retrying']
         )
         self.dead_letters = Counter(
-            'senpuki_dead_letters_total',
+            'stent_dead_letters_total',
             'Total tasks dead-lettered',
             ['queue', 'step_name', 'kind']
         )
@@ -576,7 +576,7 @@ class PrometheusMetrics(MetricsRecorder):
 metrics = PrometheusMetrics()
 start_http_server(9090)  # Expose /metrics
 
-executor = Senpuki(backend=backend, metrics=metrics)
+executor = Stent(backend=backend, metrics=metrics)
 ```
 
 ### Alerting Rules
@@ -584,10 +584,10 @@ executor = Senpuki(backend=backend, metrics=metrics)
 ```yaml
 # prometheus-alerts.yaml
 groups:
-- name: senpuki
+- name: stent
   rules:
   - alert: HighDLQCount
-    expr: increase(senpuki_dead_letters_total[1h]) > 10
+    expr: increase(stent_dead_letters_total[1h]) > 10
     for: 5m
     labels:
       severity: warning
@@ -595,7 +595,7 @@ groups:
       summary: "High dead letter queue count"
       
   - alert: TaskProcessingDelay
-    expr: senpuki_task_duration_seconds{quantile="0.99"} > 60
+    expr: stent_task_duration_seconds{quantile="0.99"} > 60
     for: 10m
     labels:
       severity: warning
@@ -603,12 +603,12 @@ groups:
       summary: "Task processing taking too long"
       
   - alert: WorkerDown
-    expr: up{job="senpuki-worker"} == 0
+    expr: up{job="stent-worker"} == 0
     for: 1m
     labels:
       severity: critical
     annotations:
-      summary: "Senpuki worker is down"
+      summary: "Stent worker is down"
 ```
 
 ## Security Best Practices
@@ -628,7 +628,7 @@ from aws_secretsmanager_caching import SecretCache
 
 # Fetch secrets at startup
 secrets = SecretCache()
-db_password = secrets.get_secret_string("senpuki/database")
+db_password = secrets.get_secret_string("stent/database")
 ```
 
 ### 3. Network Isolation
@@ -641,9 +641,9 @@ db_password = secrets.get_secret_string("senpuki/database")
 
 ```sql
 -- Create limited user for workers
-CREATE USER senpuki_worker WITH PASSWORD 'xxx';
-GRANT SELECT, INSERT, UPDATE, DELETE ON tasks TO senpuki_worker;
-GRANT SELECT, INSERT, UPDATE, DELETE ON executions TO senpuki_worker;
+CREATE USER stent_worker WITH PASSWORD 'xxx';
+GRANT SELECT, INSERT, UPDATE, DELETE ON tasks TO stent_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON executions TO stent_worker;
 -- Don't grant DROP, TRUNCATE, etc.
 ```
 
@@ -653,7 +653,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON executions TO senpuki_worker;
 
 1. Check worker logs:
    ```bash
-   kubectl logs -f deployment/senpuki-worker
+   kubectl logs -f deployment/stent-worker
    ```
 
 2. Verify database connectivity:
@@ -686,7 +686,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON executions TO senpuki_worker;
 
 3. Add Redis for notifications:
    ```python
-   notification_backend = Senpuki.notifications.RedisBackend(redis_url)
+   notification_backend = Stent.notifications.RedisBackend(redis_url)
    ```
 
 ### Tasks Stuck in "running" State

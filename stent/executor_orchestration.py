@@ -5,30 +5,26 @@ import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from senpuki.core import ExecutionProgress, ExecutionRecord, TaskRecord
-from senpuki.registry import FunctionMetadata
-from senpuki.utils.idempotency import default_idempotency_key
-from senpuki.utils.time import parse_duration
+from stent.core import ExecutionProgress, ExecutionRecord, TaskRecord
+from stent.registry import FunctionMetadata
+from stent.utils.idempotency import default_idempotency_key
+from stent.utils.time import parse_duration
 
 if TYPE_CHECKING:
-    from senpuki.executor import Senpuki
+    from stent.executor import Stent
 
 
 async def execute_map_batch(
     *,
-    executor: Senpuki,
+    executor: Stent,
     meta: FunctionMetadata,
-    iterable: Any,
+    args_list: list[tuple[tuple, dict]],
     exec_id: str,
     parent_id: str,
     permit_holder: Any,
 ) -> list[Any]:
     tasks_to_create: list[TaskRecord] = []
     results_or_tasks: list[Any | TaskRecord] = []
-
-    args_list = []
-    for item in iterable:
-        args_list.append(((item,), {}))
 
     for args, kwargs in args_list:
         key = None
@@ -191,7 +187,7 @@ def build_dispatch_records(
 
 async def persist_dispatch_records(
     *,
-    executor: Senpuki,
+    executor: Stent,
     execution: ExecutionRecord,
     root_task: TaskRecord,
 ) -> None:
@@ -205,7 +201,7 @@ async def persist_dispatch_records(
 
 async def schedule_activity_and_wait(
     *,
-    executor: Senpuki,
+    executor: Stent,
     meta: FunctionMetadata,
     args: tuple,
     kwargs: dict,

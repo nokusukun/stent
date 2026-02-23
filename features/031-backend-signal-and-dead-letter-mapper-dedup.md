@@ -4,12 +4,12 @@
 Continued P2.4 by deduplicating signal and dead-letter row mapping logic shared by SQLite and Postgres backends, while keeping SQL execution and transaction behavior backend-specific.
 
 ## Key Changes
-* `senpuki/backend/utils.py`
+* `stent/backend/utils.py`
   * Added `row_to_signal` for consistent `SignalRecord` conversion across backends.
   * Added `row_to_dead_letter` for consistent `DeadLetterRecord` conversion from stored JSON payloads.
-* `senpuki/backend/sqlite.py`
+* `stent/backend/sqlite.py`
   * Updated `get_signal` and dead-letter mapping to delegate to shared helpers.
-* `senpuki/backend/postgres.py`
+* `stent/backend/postgres.py`
   * Updated `get_signal` and dead-letter mapping to delegate to shared helpers.
 
 ## Usage/Configuration

@@ -4,8 +4,8 @@ from typing import List
 
 import pytest
 
-from senpuki.backend.sqlite import SQLiteBackend
-from senpuki.core import ExecutionRecord, TaskRecord, RetryPolicy
+from stent.backend.sqlite import SQLiteBackend
+from stent.core import ExecutionRecord, TaskRecord, RetryPolicy
 from tests.utils import cleanup_test_backend
 
 

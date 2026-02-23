@@ -4,7 +4,7 @@
 Added `max_duration` parameter to `executor.dispatch()` as a more descriptive alias for `expiry`. This allows users to specify the maximum allowed runtime for a workflow before it is automatically timed out.
 
 ## Key Changes
-*   **`senpuki/executor.py`**: Updated `dispatch` method to accept `max_duration`.
+*   **`stent/executor.py`**: Updated `dispatch` method to accept `max_duration`.
     *   `max_duration` works exactly like `expiry`.
     *   Added validation to prevent providing both `expiry` and `max_duration`.
 *   **Tests**: Added `tests/test_max_duration.py` to verify:

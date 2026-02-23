@@ -4,9 +4,9 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Any, Union
-from senpuki.backend.base import Backend
-from senpuki.core import ExecutionRecord, TaskRecord, ExecutionProgress, RetryPolicy, SignalRecord, DeadLetterRecord
-from senpuki.backend.utils import (
+from stent.backend.base import Backend
+from stent.core import ExecutionRecord, TaskRecord, ExecutionProgress, RetryPolicy, SignalRecord, DeadLetterRecord
+from stent.backend.utils import (
     build_filtered_count_query,
     build_filtered_list_query,
     dollar_placeholder,

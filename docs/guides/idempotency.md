@@ -1,10 +1,10 @@
 # Idempotency & Caching
 
-This guide covers how to use Senpuki's idempotency and caching features to prevent duplicate work and optimize performance.
+This guide covers how to use Stent's idempotency and caching features to prevent duplicate work and optimize performance.
 
 ## Overview
 
-Senpuki provides two related but distinct features:
+Stent provides two related but distinct features:
 
 | Feature | Purpose | Scope | Duration |
 |---------|---------|-------|----------|
@@ -20,9 +20,9 @@ Idempotency ensures a function with the same arguments only executes once, regar
 ### Enabling Idempotency
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def send_welcome_email(user_id: str) -> bool:
     # Even if called multiple times with same user_id,
     # email is only sent once
@@ -32,7 +32,7 @@ async def send_welcome_email(user_id: str) -> bool:
 
 ### How It Works
 
-1. When called, Senpuki generates a key from:
+1. When called, Stent generates a key from:
    - Function name
    - Version (if set)
    - Serialized arguments
@@ -67,7 +67,7 @@ Check idempotency table
 
 1. **Payment processing**:
 ```python
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def charge_customer(order_id: str, amount: int) -> str:
     # Safe to retry - won't double-charge
     return await payment_gateway.charge(order_id, amount)
@@ -75,7 +75,7 @@ async def charge_customer(order_id: str, amount: int) -> str:
 
 2. **Email sending**:
 ```python
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def send_order_confirmation(order_id: str) -> bool:
     # Won't send duplicate emails
     return await email_service.send_confirmation(order_id)
@@ -83,7 +83,7 @@ async def send_order_confirmation(order_id: str) -> bool:
 
 3. **External API calls**:
 ```python
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def create_external_resource(resource_id: str, config: dict) -> dict:
     # Won't create duplicate resources
     return await external_api.create(resource_id, config)
@@ -94,7 +94,7 @@ async def create_external_resource(resource_id: str, config: dict) -> dict:
 Use `idempotency_key_func` to customize key generation:
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,
     idempotency_key_func=lambda order_id, **_: f"process_order:{order_id}"
 )
@@ -108,7 +108,7 @@ async def process_order(order_id: str, timestamp: str, retry_count: int) -> dict
 
 ```python
 # Include only specific args
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,
     idempotency_key_func=lambda user_id, action, **_: f"{user_id}:{action}"
 )
@@ -117,7 +117,7 @@ async def user_action(user_id: str, action: str, metadata: dict) -> bool:
     ...
 
 # Include external correlation ID
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,
     idempotency_key_func=lambda request, **_: request["correlation_id"]
 )
@@ -126,7 +126,7 @@ async def process_request(request: dict) -> dict:
     ...
 
 # Time-windowed idempotency
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,
     idempotency_key_func=lambda user_id, **_: f"{user_id}:{datetime.now().strftime('%Y-%m-%d')}"
 )
@@ -142,7 +142,7 @@ Caching stores function results for reuse across different executions.
 ### Enabling Caching
 
 ```python
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def expensive_computation(data_hash: str) -> bytes:
     # Result is cached - subsequent calls return immediately
     return await compute_expensive_result(data_hash)
@@ -159,7 +159,7 @@ async def expensive_computation(data_hash: str) -> bytes:
 
 1. **Expensive computations**:
 ```python
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def generate_report(report_params: dict) -> str:
     # Report generation takes 10 minutes
     # Cached for reuse
@@ -168,7 +168,7 @@ async def generate_report(report_params: dict) -> str:
 
 2. **External data fetching**:
 ```python
-@Senpuki.durable(cached=True, version="v1")
+@Stent.durable(cached=True, version="v1")
 async def fetch_exchange_rates(date: str) -> dict:
     # Rates for a specific date don't change
     return await forex_api.get_rates(date)
@@ -176,7 +176,7 @@ async def fetch_exchange_rates(date: str) -> dict:
 
 3. **ML model inference**:
 ```python
-@Senpuki.durable(cached=True, version="model-v2")
+@Stent.durable(cached=True, version="model-v2")
 async def classify_document(doc_hash: str) -> dict:
     # Same document always gets same classification
     return await ml_model.classify(doc_hash)
@@ -188,12 +188,12 @@ Use `version` to invalidate cache when logic changes:
 
 ```python
 # Original version
-@Senpuki.durable(cached=True, version="v1")
+@Stent.durable(cached=True, version="v1")
 async def process_data(data: dict) -> dict:
     return original_algorithm(data)
 
 # After algorithm update - new version invalidates old cache
-@Senpuki.durable(cached=True, version="v2")
+@Stent.durable(cached=True, version="v2")
 async def process_data(data: dict) -> dict:
     return improved_algorithm(data)
 ```
@@ -205,7 +205,7 @@ While similar, they serve different purposes:
 ### Idempotency
 
 ```python
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def charge_customer(order_id: str, amount: int) -> str:
     # Purpose: Prevent duplicate charges
     # Behavior: Never re-executes with same args
@@ -216,7 +216,7 @@ async def charge_customer(order_id: str, amount: int) -> str:
 ### Caching
 
 ```python
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def compute_pricing(product_ids: list[str]) -> dict:
     # Purpose: Avoid redundant computation
     # Behavior: Returns cached result if available
@@ -239,7 +239,7 @@ async def compute_pricing(product_ids: list[str]) -> dict:
 ### Using Both
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,  # Don't re-execute
     cached=True,      # Reuse across executions
     version="v1"
@@ -257,13 +257,13 @@ async def process_and_store(data_id: str) -> dict:
 
 ```python
 # Bad: Not idempotent
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def increment_counter(counter_id: str) -> int:
     # Each call increments - not truly idempotent!
     return await db.increment(counter_id)
 
 # Good: Truly idempotent
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def set_counter(counter_id: str, value: int) -> int:
     # Same args always produce same result
     return await db.set(counter_id, value)
@@ -272,7 +272,7 @@ async def set_counter(counter_id: str, value: int) -> int:
 ### 2. Use External Idempotency Keys
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,
     idempotency_key_func=lambda order, **_: order["idempotency_key"]
 )
@@ -290,7 +290,7 @@ async def process_order(order: dict) -> dict:
 # 2. Old cached results won't be used
 # 3. New results will be cached with new key
 
-@Senpuki.durable(cached=True, version="v3")  # Was v2
+@Stent.durable(cached=True, version="v3")  # Was v2
 async def transform_data(data: dict) -> dict:
     # New transformation logic
     ...
@@ -300,13 +300,13 @@ async def transform_data(data: dict) -> dict:
 
 ```python
 # Bad: Large args make large keys
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def process_large_data(huge_list: list[dict]) -> dict:
     # Key includes serialized huge_list - inefficient
     ...
 
 # Good: Use hash or ID
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def process_large_data(data_hash: str) -> dict:
     # Key is just the hash - efficient
     data = await fetch_data(data_hash)
@@ -316,7 +316,7 @@ async def process_large_data(data_hash: str) -> dict:
 ### 5. Handle Cache Misses Gracefully
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow_with_caching():
     # First call computes result
     result1 = await expensive_computation("hash-1")
@@ -330,13 +330,13 @@ async def workflow_with_caching():
 
 ## Cache Invalidation
 
-Senpuki doesn't provide automatic cache invalidation. Strategies:
+Stent doesn't provide automatic cache invalidation. Strategies:
 
 ### 1. Version Bumping
 
 ```python
 # Increment version to invalidate all cached results
-@Senpuki.durable(cached=True, version="v4")  # Bump from v3
+@Stent.durable(cached=True, version="v4")  # Bump from v3
 async def process_data(data: dict) -> dict:
     ...
 ```
@@ -344,7 +344,7 @@ async def process_data(data: dict) -> dict:
 ### 2. Time-Based Keys
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     cached=True,
     idempotency_key_func=lambda data_id, **_: 
         f"{data_id}:{datetime.now().strftime('%Y-%m-%d')}"
@@ -357,7 +357,7 @@ async def daily_report(data_id: str) -> dict:
 ### 3. Include Version in Args
 
 ```python
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def fetch_with_version(resource_id: str, version: int) -> dict:
     # Cache key includes version
     # Caller controls invalidation by passing new version
@@ -385,7 +385,7 @@ for progress in state.progress:
 import aiosqlite
 
 async def view_cache():
-    async with aiosqlite.connect("senpuki.db") as db:
+    async with aiosqlite.connect("stent.db") as db:
         async with db.execute("SELECT key, created_at FROM cache") as cursor:
             async for row in cursor:
                 print(f"Key: {row[0]}, Created: {row[1]}")
@@ -396,7 +396,7 @@ async def view_cache():
 ```python
 # Manual cache clear (use with caution)
 async def clear_cache():
-    async with aiosqlite.connect("senpuki.db") as db:
+    async with aiosqlite.connect("stent.db") as db:
         await db.execute("DELETE FROM cache")
         await db.commit()
 ```

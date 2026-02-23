@@ -5,19 +5,19 @@ from datetime import datetime, timedelta
 from logging import Logger
 from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
-from senpuki.core import ExecutionProgress, ExecutionRecord, RetryPolicy, TaskRecord, compute_retry_delay
-from senpuki.executor_context import ExecutionContext, current_execution_context
-from senpuki.utils.idempotency import default_idempotency_key
+from stent.core import ExecutionProgress, ExecutionRecord, RetryPolicy, TaskRecord, compute_retry_delay
+from stent.executor_context import ExecutionContext, current_execution_context
+from stent.utils.idempotency import default_idempotency_key
 
 if TYPE_CHECKING:
-    from senpuki.executor import Senpuki
+    from stent.executor import Stent
 
 TExpiryError = TypeVar("TExpiryError", bound=BaseException)
 
 
 async def lease_heartbeat_loop(
     *,
-    executor: Senpuki,
+    executor: Stent,
     task_id: str,
     worker_id: str,
     lease_duration: timedelta,
@@ -52,7 +52,7 @@ async def lease_heartbeat_loop(
 
 async def run_claimed_task(
     *,
-    executor: Senpuki,
+    executor: Stent,
     task: TaskRecord,
     worker_id: str,
     lease_duration: timedelta,

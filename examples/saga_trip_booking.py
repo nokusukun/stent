@@ -1,39 +1,39 @@
 import asyncio
 import os
 import logging
-from senpuki import Senpuki, Result, RetryPolicy
+from stent import Stent, Result, RetryPolicy
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger("SagaExample")
 
 # --- Activities (Steps) ---
 
-@Senpuki.durable()
+@Stent.durable()
 async def book_flight(trip_id: str) -> str:
     # Simulate success
     await asyncio.sleep(0.2)
     logger.info(f"Flight booked for {trip_id}")
     return f"flight_{trip_id}"
 
-@Senpuki.durable()
+@Stent.durable()
 async def cancel_flight(trip_id: str):
     await asyncio.sleep(0.2)
     logger.warning(f"Flight cancelled for {trip_id}")
     return True
 
-@Senpuki.durable()
+@Stent.durable()
 async def book_hotel(trip_id: str) -> str:
     await asyncio.sleep(0.2)
     logger.info(f"Hotel booked for {trip_id}")
     return f"hotel_{trip_id}"
 
-@Senpuki.durable()
+@Stent.durable()
 async def cancel_hotel(trip_id: str):
     await asyncio.sleep(0.2)
     logger.warning(f"Hotel cancelled for {trip_id}")
     return True
 
-@Senpuki.durable()
+@Stent.durable()
 async def book_car(trip_id: str) -> str:
     await asyncio.sleep(0.2)
     # Simulate failure for a specific trip ID to test compensation
@@ -42,7 +42,7 @@ async def book_car(trip_id: str) -> str:
     logger.info(f"Car booked for {trip_id}")
     return f"car_{trip_id}"
 
-@Senpuki.durable()
+@Stent.durable()
 async def cancel_car(trip_id: str):
     await asyncio.sleep(0.2)
     logger.warning(f"Car cancelled for {trip_id}")
@@ -50,7 +50,7 @@ async def cancel_car(trip_id: str):
 
 # --- Orchestrator (Saga) ---
 
-@Senpuki.durable()
+@Stent.durable()
 async def trip_booking_saga(trip_id: str) -> Result[dict, Exception]:
     compensations = []
     data = {}
@@ -91,9 +91,9 @@ async def main():
     if os.path.exists(db_path):
         os.remove(db_path)
     
-    backend = Senpuki.backends.SQLiteBackend(db_path)
+    backend = Stent.backends.SQLiteBackend(db_path)
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     worker_task = asyncio.create_task(executor.serve(poll_interval=0.1))
     
     # 1. Successful Trip

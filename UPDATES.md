@@ -1,6 +1,6 @@
 # Recent Updates: Resilience & Maintenance
 
-This document outlines the recent improvements made to the Senpuki framework, focusing on task resilience (handling worker crashes) and database maintenance (automatic cleanup).
+This document outlines the recent improvements made to the Stent framework, focusing on task resilience (handling worker crashes) and database maintenance (automatic cleanup).
 
 ## 1. Task Resilience & Recovery
 
@@ -78,7 +78,7 @@ Use the `max_concurrent` parameter in the `@durable` decorator.
 
 ```python
 # Limit to 1 concurrent instance globally
-@Senpuki.durable(max_concurrent=1)
+@Stent.durable(max_concurrent=1)
 async def exclusive_task(x: int):
     pass
 ```

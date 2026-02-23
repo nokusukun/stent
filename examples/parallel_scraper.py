@@ -2,37 +2,37 @@ from typing import Any
 import asyncio
 import random
 import logging
-from senpuki import Senpuki
+from stent import Stent
 
 # Configure logging to see what's happening
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # 1. Define Activities
-@Senpuki.durable()
+@Stent.durable()
 async def fetch_url(url: str) -> str:
     """Simulates fetching a webpage with variable latency."""
     # Simulate network latency (0.5 to 2.0 seconds)
-    # We use Senpuki.sleep to be "good citizens" and release the worker
+    # We use Stent.sleep to be "good citizens" and release the worker
     delay = random.uniform(0.5, 2.0)
-    await Senpuki.sleep(f"{delay:.2f}s")
+    await Stent.sleep(f"{delay:.2f}s")
     
     if "error" in url:
         raise ValueError(f"404 Not Found: {url}")
         
     return f"<html><body><h1>Content of {url}</h1><p>Some interesting text here.</p></body></html>"
 
-@Senpuki.durable()
+@Stent.durable()
 async def analyze_sentiment(content: str) -> dict:
     """Simulates CPU-intensive analysis."""
     print(f"[Analysis] Analyzing sentiment: {content}...")
     await asyncio.sleep(0.1) # Simulate CPU work
     return {
         "score": random.randint(0, 100),
-        "keywords": ["senpuki", "python", "durable"]
+        "keywords": ["stent", "python", "durable"]
     }
 
 # 2. Define Sub-Orchestrator
-@Senpuki.durable()
+@Stent.durable()
 async def process_page(url: str) -> dict:
     """
     Orchestrates the processing of a single page.
@@ -53,7 +53,7 @@ async def process_page(url: str) -> dict:
     }
 
 # 3. Define Main Orchestrator
-@Senpuki.durable()
+@Stent.durable()
 async def site_crawler(urls: list[str]) -> dict:
     """
     Main workflow that fans out to process multiple pages and fans in to aggregate results.
@@ -66,7 +66,7 @@ async def site_crawler(urls: list[str]) -> dict:
     
     # Fan-in: Wait for all to complete.
     # return_exceptions=True allows the workflow to continue even if some pages fail.
-    results: list[Any | BaseException] = await Senpuki.gather(*tasks, return_exceptions=True)
+    results: list[Any | BaseException] = await Stent.gather(*tasks, return_exceptions=True)
     
     # Aggregation Logic
     report: dict[str, Any] = {
@@ -97,9 +97,9 @@ async def site_crawler(urls: list[str]) -> dict:
 # 4. Run the example
 async def main():
     # Setup backend and executor
-    backend = Senpuki.backends.SQLiteBackend("complex_gather.sqlite")
+    backend = Stent.backends.SQLiteBackend("complex_gather.sqlite")
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Start worker in background (high concurrency for parallel tasks)
     worker_task = asyncio.create_task(executor.serve(max_concurrency=20))

@@ -1,37 +1,37 @@
 # Monitoring & Observability
 
-This guide covers how to monitor Senpuki workflows using the CLI, structured logging, metrics, and OpenTelemetry integration.
+This guide covers how to monitor Stent workflows using the CLI, structured logging, metrics, and OpenTelemetry integration.
 
 ## Command Line Interface (CLI)
 
-Senpuki includes a CLI for inspecting and managing workflows.
+Stent includes a CLI for inspecting and managing workflows.
 
 ### Configuration
 
-The CLI connects to your database via `--db` flag or `SENPUKI_DB` environment variable:
+The CLI connects to your database via `--db` flag or `STENT_DB` environment variable:
 
 ```bash
 # Environment variable
-export SENPUKI_DB="postgresql://user:pass@localhost/senpuki"
+export STENT_DB="postgresql://user:pass@localhost/stent"
 
 # Or pass directly
-senpuki --db senpuki.sqlite list
+stent --db stent.sqlite list
 ```
 
 ### Listing Executions
 
 ```bash
 # List recent executions
-senpuki list
+stent list
 
 # List more executions
-senpuki list --limit 50
+stent list --limit 50
 
 # Filter by state
-senpuki list --state pending
-senpuki list --state running
-senpuki list --state completed
-senpuki list --state failed
+stent list --state pending
+stent list --state running
+stent list --state completed
+stent list --state failed
 
 # Output:
 # ID                                   | State      | Started At
@@ -43,7 +43,7 @@ senpuki list --state failed
 ### Showing Execution Details
 
 ```bash
-senpuki show 550e8400-e29b-41d4-a716-446655440000
+stent show 550e8400-e29b-41d4-a716-446655440000
 
 # Output:
 # ID: 550e8400-e29b-41d4-a716-446655440000
@@ -72,11 +72,11 @@ senpuki show 550e8400-e29b-41d4-a716-446655440000
 
 ```bash
 # One-shot execution and queue stats
-senpuki stats
+stent stats
 
 # Live terminal dashboard
-senpuki watch
-senpuki watch --interval 1.0
+stent watch
+stent watch --interval 1.0
 ```
 
 `stats` and `watch` use backend count queries for scalable totals (executions by state, pending tasks, and dead-letter counts).
@@ -85,8 +85,8 @@ senpuki watch --interval 1.0
 
 ```bash
 # List dead letters
-senpuki dlq list
-senpuki dlq list --limit 100
+stent dlq list
+stent dlq list --limit 100
 
 # Output:
 # Task ID                              | Execution                            | Step            | Reason
@@ -94,7 +94,7 @@ senpuki dlq list --limit 100
 # 660e8400-e29b-41d4-a716-446655440000 | 550e8400-e29b-41d4-a716-446655440000 | charge_payment  | ConnectionError: timeout
 
 # Show details
-senpuki dlq show 660e8400-e29b-41d4-a716-446655440000
+stent dlq show 660e8400-e29b-41d4-a716-446655440000
 
 # Output:
 # Task ID: 660e8400-e29b-41d4-a716-446655440000
@@ -107,27 +107,27 @@ senpuki dlq show 660e8400-e29b-41d4-a716-446655440000
 # Tags: billing
 
 # Replay a dead letter
-senpuki dlq replay 660e8400-e29b-41d4-a716-446655440000
+stent dlq replay 660e8400-e29b-41d4-a716-446655440000
 
 # Replay to a different queue
-senpuki dlq replay 660e8400-e29b-41d4-a716-446655440000 --queue retry
+stent dlq replay 660e8400-e29b-41d4-a716-446655440000 --queue retry
 ```
 
 ## Structured Logging
 
-Senpuki automatically injects context into log records.
+Stent automatically injects context into log records.
 
 ### Setup
 
 ```python
 import logging
-from senpuki import install_structured_logging
+from stent import install_structured_logging
 
-# Configure logging format to include Senpuki context
+# Configure logging format to include Stent context
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s "
-           "[exec=%(senpuki_execution_id)s task=%(senpuki_task_id)s] "
+           "[exec=%(stent_execution_id)s task=%(stent_task_id)s] "
            "%(message)s"
 )
 
@@ -139,9 +139,9 @@ install_structured_logging(logging.getLogger())
 
 | Attribute | Description |
 |-----------|-------------|
-| `senpuki_execution_id` | Current execution ID |
-| `senpuki_task_id` | Current task ID |
-| `senpuki_worker_id` | Worker processing the task |
+| `stent_execution_id` | Current execution ID |
+| `stent_task_id` | Current task ID |
+| `stent_worker_id` | Worker processing the task |
 
 ### Example Output
 
@@ -165,9 +165,9 @@ class JsonFormatter(logging.Formatter):
             "timestamp": self.formatTime(record),
             "level": record.levelname,
             "message": record.getMessage(),
-            "execution_id": getattr(record, "senpuki_execution_id", None),
-            "task_id": getattr(record, "senpuki_task_id", None),
-            "worker_id": getattr(record, "senpuki_worker_id", None),
+            "execution_id": getattr(record, "stent_execution_id", None),
+            "task_id": getattr(record, "stent_task_id", None),
+            "worker_id": getattr(record, "stent_worker_id", None),
         })
 
 handler = logging.StreamHandler()
@@ -177,7 +177,7 @@ logging.getLogger().addHandler(handler)
 
 ## Metrics
 
-Senpuki provides a `MetricsRecorder` protocol for custom metrics implementations.
+Stent provides a `MetricsRecorder` protocol for custom metrics implementations.
 
 ### Protocol Definition
 
@@ -233,32 +233,32 @@ from prometheus_client import Counter, Histogram, Gauge
 
 # Define metrics
 TASKS_CLAIMED = Counter(
-    "senpuki_tasks_claimed_total",
+    "stent_tasks_claimed_total",
     "Total tasks claimed by workers",
     ["queue", "step", "kind"]
 )
 
 TASKS_COMPLETED = Counter(
-    "senpuki_tasks_completed_total",
+    "stent_tasks_completed_total",
     "Total tasks completed",
     ["queue", "step", "kind"]
 )
 
 TASK_DURATION = Histogram(
-    "senpuki_task_duration_seconds",
+    "stent_task_duration_seconds",
     "Task execution duration",
     ["queue", "step"],
     buckets=[0.1, 0.5, 1, 2, 5, 10, 30, 60, 120]
 )
 
 TASKS_FAILED = Counter(
-    "senpuki_tasks_failed_total",
+    "stent_tasks_failed_total",
     "Total tasks failed",
     ["queue", "step", "retrying"]
 )
 
 DEAD_LETTERS = Counter(
-    "senpuki_dead_letters_total",
+    "stent_dead_letters_total",
     "Tasks moved to dead letter queue",
     ["queue", "step"]
 )
@@ -299,7 +299,7 @@ class PrometheusMetrics:
         pass  # Optional
 
 # Use with executor
-executor = Senpuki(backend=backend, metrics=PrometheusMetrics())
+executor = Stent(backend=backend, metrics=PrometheusMetrics())
 ```
 
 ### StatsD Example
@@ -308,7 +308,7 @@ executor = Senpuki(backend=backend, metrics=PrometheusMetrics())
 import statsd
 
 class StatsDMetrics:
-    def __init__(self, host="localhost", port=8125, prefix="senpuki"):
+    def __init__(self, host="localhost", port=8125, prefix="stent"):
         self.client = statsd.StatsClient(host, port, prefix=prefix)
     
     def task_claimed(self, *, queue, step_name, kind):
@@ -334,7 +334,7 @@ class StatsDMetrics:
 
 ## OpenTelemetry Integration
 
-Senpuki supports distributed tracing via OpenTelemetry.
+Stent supports distributed tracing via OpenTelemetry.
 
 ### Setup
 
@@ -344,8 +344,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
-from senpuki import Senpuki
-from senpuki.telemetry import instrument
+from stent import Stent
+from stent.telemetry import instrument
 
 # Configure OpenTelemetry
 provider = TracerProvider()
@@ -353,34 +353,34 @@ processor = BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4317"
 provider.add_span_processor(processor)
 trace.set_tracer_provider(provider)
 
-# Instrument Senpuki
+# Instrument Stent
 success = instrument()
 if success:
-    print("Senpuki instrumented with OpenTelemetry")
+    print("Stent instrumented with OpenTelemetry")
 else:
     print("OpenTelemetry not installed, skipping instrumentation")
 
 # Create executor as normal
-executor = Senpuki(backend=backend)
+executor = Stent(backend=backend)
 ```
 
 ### Spans Created
 
 | Span Name | Kind | Attributes |
 |-----------|------|------------|
-| `senpuki.dispatch {function}` | PRODUCER | `senpuki.function`, `senpuki.execution_id` |
-| `senpuki.execute {step}` | CONSUMER | `senpuki.task_id`, `senpuki.execution_id`, `senpuki.step`, `senpuki.worker_id` |
+| `stent.dispatch {function}` | PRODUCER | `stent.function`, `stent.execution_id` |
+| `stent.execute {step}` | CONSUMER | `stent.task_id`, `stent.execution_id`, `stent.step`, `stent.worker_id` |
 
 ### Trace Propagation
 
 Spans are automatically linked:
 
 ```
-senpuki.dispatch order_workflow
-    └── senpuki.execute order_workflow
-            ├── senpuki.execute validate_order
-            ├── senpuki.execute charge_payment
-            └── senpuki.execute send_notification
+stent.dispatch order_workflow
+    └── stent.execute order_workflow
+            ├── stent.execute validate_order
+            ├── stent.execute charge_payment
+            └── stent.execute send_notification
 ```
 
 ### Jaeger Example
@@ -505,21 +505,21 @@ async def monitor_failures():
       "title": "Task Throughput",
       "type": "graph",
       "targets": [
-        {"expr": "rate(senpuki_tasks_completed_total[5m])"}
+        {"expr": "rate(stent_tasks_completed_total[5m])"}
       ]
     },
     {
       "title": "Task Duration (p95)",
       "type": "graph",
       "targets": [
-        {"expr": "histogram_quantile(0.95, rate(senpuki_task_duration_seconds_bucket[5m]))"}
+        {"expr": "histogram_quantile(0.95, rate(stent_task_duration_seconds_bucket[5m]))"}
       ]
     },
     {
       "title": "Error Rate",
       "type": "graph",
       "targets": [
-        {"expr": "rate(senpuki_tasks_failed_total[5m]) / rate(senpuki_tasks_completed_total[5m])"}
+        {"expr": "rate(stent_tasks_failed_total[5m]) / rate(stent_tasks_completed_total[5m])"}
       ]
     }
   ]

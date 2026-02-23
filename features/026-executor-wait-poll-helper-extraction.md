@@ -1,13 +1,13 @@
 # Executor Wait/Poll Helper Extraction
 
 ## Description
-Started P2.3 by extracting wait/poll logic from `Senpuki` into a focused helper module while keeping public API and runtime behavior unchanged.
+Started P2.3 by extracting wait/poll logic from `Stent` into a focused helper module while keeping public API and runtime behavior unchanged.
 
 ## Key Changes
-* `senpuki/executor_wait.py`
+* `stent/executor_wait.py`
   * Added shared wait helpers for task-terminal and execution-terminal waits.
   * Centralized notification-vs-poll fallback behavior and terminal state definitions.
-* `senpuki/executor.py`
+* `stent/executor.py`
   * Replaced inline wait/poll implementations in `_wait_for_task_internal` and `wait_for` with calls to the new helpers.
   * Kept timeout/error semantics and polling behavior aligned with prior implementation.
 

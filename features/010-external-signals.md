@@ -6,7 +6,7 @@ External Signals allow a running workflow (orchestrator) to pause execution and 
 Signals are persistent. If a signal is sent before the workflow is ready to receive it, it is buffered and consumed immediately when the workflow calls `wait_for_signal`.
 
 ## Key Changes
-*   **`Senpuki.wait_for_signal(name: str)`**: New method to pause workflow execution until a signal with the given name is received.
+*   **`Stent.wait_for_signal(name: str)`**: New method to pause workflow execution until a signal with the given name is received.
 *   **`executor.send_signal(execution_id: str, name: str, payload: Any)`**: New method to send a signal to a specific execution.
 *   **Backend Storage**: A new `signals` table is added to store buffered signals.
 
@@ -15,14 +15,14 @@ Signals are persistent. If a signal is sent before the workflow is ready to rece
 **1. The Workflow (Waiting)**
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def approval_workflow(user_id: str):
     # Do some work...
     await notify_user(user_id)
     
     # Wait for approval signal
     # Workflow suspends here and releases worker resources
-    decision = await Senpuki.wait_for_signal("approval")
+    decision = await Stent.wait_for_signal("approval")
     
     if decision.get("approved"):
         await process_request()

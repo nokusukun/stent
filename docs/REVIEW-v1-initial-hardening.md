@@ -1,10 +1,10 @@
-# Senpuki Library Review (Principal Engineer) - Post-Hardening
+# Stent Library Review (Principal Engineer) - Post-Hardening
 
 ## Scope
 This review focuses on architecture, developer experience (DX), and production readiness risks after the hardening work.
 
 ## Executive Summary
-Senpuki is a distributed durable-functions library for Python (conceptually similar to Temporal / Azure Durable Functions). Since the initial review, significant hardening work has been completed. The codebase now addresses the most critical production issues:
+Stent is a distributed durable-functions library for Python (conceptually similar to Temporal / Azure Durable Functions). Since the initial review, significant hardening work has been completed. The codebase now addresses the most critical production issues:
 
 **Fixed Since Last Review:**
 - Transactional integrity via `create_execution_with_root_task()` (executor.py:673, sqlite.py:191, postgres.py:190)
@@ -31,7 +31,7 @@ Senpuki is a distributed durable-functions library for Python (conceptually simi
 
 ### Core Architecture
 - **Backend abstraction** via `Backend` Protocol (backend/base.py:5) - clean separation
-- **Intuitive DX** with `@Senpuki.durable()` decorator (executor.py:309-346)
+- **Intuitive DX** with `@Stent.durable()` decorator (executor.py:309-346)
 - **Comprehensive feature set**: retries/backoff, leases, scheduling, queues/tags, caching, idempotency, signals
 - **Connection pooling** in Postgres backend via `asyncpg.create_pool()` (postgres.py:19)
 - **Atomic transactions** for execution+task creation (postgres.py:193-195, sqlite.py:193-200)
@@ -62,13 +62,13 @@ registry = FunctionRegistry()
 
 **Remaining Risks:**
 - Test pollution across test modules if not explicitly using isolated registries
-- Multiple `Senpuki` instances in same process share decorators by default
+- Multiple `Stent` instances in same process share decorators by default
 
 **Recommendation:**
 - Document the isolation pattern explicitly
-- Consider making `@Senpuki.durable()` instance-bound rather than class-bound for clearer scoping
+- Consider making `@Stent.durable()` instance-bound rather than class-bound for clearer scoping
 
-### 2) `@Senpuki.durable()` is Class-Level, Registry is Instance-Level (MEDIUM)
+### 2) `@Stent.durable()` is Class-Level, Registry is Instance-Level (MEDIUM)
 File: `executor.py:309-346`
 ```python
 @classmethod
@@ -76,12 +76,12 @@ def durable(cls, ...):
     reg = cls.default_registry  # Uses class-level registry
 ```
 
-But `Senpuki.__init__` allows injecting a different registry:
+But `Stent.__init__` allows injecting a different registry:
 ```python
 self.registry = function_registry or self.default_registry
 ```
 
-**Risk**: Functions decorated with `@Senpuki.durable()` always register to the class-level `default_registry`, not the instance registry. This creates subtle bugs when using custom registries.
+**Risk**: Functions decorated with `@Stent.durable()` always register to the class-level `default_registry`, not the instance registry. This creates subtle bugs when using custom registries.
 
 **Recommendation:**
 - Either make `durable()` an instance method (breaking change)
@@ -103,7 +103,7 @@ Every step appends to `execution_progress` table. Long-running workflows with ma
 ### 1) Sleep Semantics Could Be Confusing (LOW)
 File: `executor.py:274-307`
 
-`Senpuki.sleep()` is a static method that looks up `current_executor` from context. If called outside a durable context, it falls back to `asyncio.sleep`. This dual behavior could surprise users.
+`Stent.sleep()` is a static method that looks up `current_executor` from context. If called outside a durable context, it falls back to `asyncio.sleep`. This dual behavior could surprise users.
 
 **Recommendation:**
 - Consider raising an error outside durable context rather than silent fallback
@@ -122,9 +122,9 @@ File: `executor.py:348-360`
 File: `cli.py:112-115`
 ```python
 if "://" in args.db or "postgres" in args.db:
-    backend = Senpuki.backends.PostgresBackend(args.db)
+    backend = Stent.backends.PostgresBackend(args.db)
 else:
-    backend = Senpuki.backends.SQLiteBackend(args.db)
+    backend = Stent.backends.SQLiteBackend(args.db)
 ```
 
 Simple heuristic could misclassify paths containing "postgres" or "://".

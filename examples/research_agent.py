@@ -19,7 +19,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from senpuki import Senpuki, Result, RetryPolicy
+from stent import Stent, Result, RetryPolicy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -134,7 +134,7 @@ async def mock_fetch_page(url: str) -> str:
 # Durable Functions - Activities (Leaf Operations)
 # =============================================================================
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=3,
         initial_delay=1.0,
@@ -169,7 +169,7 @@ Return JSON format:
     return queries
 
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=3,
         initial_delay=0.5,
@@ -186,7 +186,7 @@ async def web_search(query: str) -> list[dict]:
     return results
 
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=3,
         initial_delay=1.0,
@@ -214,7 +214,7 @@ async def fetch_webpage(url: str) -> dict:
     }
 
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=3,
         initial_delay=1.0,
@@ -255,7 +255,7 @@ Return JSON format:
     }
 
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=3,
         initial_delay=2.0,
@@ -312,7 +312,7 @@ Return JSON format:
 # Durable Functions - Sub-Orchestrators
 # =============================================================================
 
-@Senpuki.durable()
+@Stent.durable()
 async def search_and_fetch_sources(query: dict) -> list[dict]:
     """Search for a query and fetch all resulting pages."""
     # Search
@@ -339,7 +339,7 @@ async def search_and_fetch_sources(query: dict) -> list[dict]:
     return sources
 
 
-@Senpuki.durable()
+@Stent.durable()
 async def process_sources_batch(
     sources: list[dict],
     question: str
@@ -368,7 +368,7 @@ async def process_sources_batch(
 # Main Orchestrator - Research Agent Workflow
 # =============================================================================
 
-@Senpuki.durable()
+@Stent.durable()
 async def research_agent(question: str) -> Result[dict, str]:
     """
     Main research agent workflow.
@@ -449,7 +449,7 @@ async def research_agent(question: str) -> Result[dict, str]:
 # Advanced: Multi-Agent Research with Critic
 # =============================================================================
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(max_attempts=2),
     max_concurrent=2,
 )
@@ -509,7 +509,7 @@ Return JSON format:
     }
 
 
-@Senpuki.durable()
+@Stent.durable()
 async def research_with_critique(question: str) -> Result[dict, str]:
     """
     Enhanced research workflow with critic agent feedback loop.
@@ -574,10 +574,10 @@ async def research_with_critique(question: str) -> Result[dict, str]:
 
 async def main():
     # Setup
-    backend = Senpuki.backends.SQLiteBackend("research_agent.db")
+    backend = Stent.backends.SQLiteBackend("research_agent.db")
     await backend.init_db()
     
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Start worker in background
     worker = asyncio.create_task(executor.serve(max_concurrency=20))

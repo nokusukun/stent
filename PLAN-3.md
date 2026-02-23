@@ -1,4 +1,4 @@
-# Senpuki Production Hardening Plan - 3.0
+# Stent Production Hardening Plan - 3.0
 
 This plan turns the latest architecture review into a production-focused execution roadmap, based on confirmed decisions and scale targets.
 
@@ -6,7 +6,7 @@ This plan turns the latest architecture review into a production-focused executi
 
 - `expiry=0` means no timeout (wait indefinitely).
 - Signal semantics are latest-value-wins for the same `(execution_id, signal_name)`.
-- Workload target for `Senpuki.map(...)` is up to ~300,000 items.
+- Workload target for `Stent.map(...)` is up to ~300,000 items.
 - Input is trusted (internal), not multi-tenant adversarial.
 - Time model should be naive UTC.
 - Wall clock timing is acceptable (no monotonic/SLO precision requirements).
@@ -43,7 +43,7 @@ This plan turns the latest architecture review into a production-focused executi
 - Add explicit tests to lock this in for both task wait and execution wait.
 
 **Files**
-- `senpuki/executor_wait.py`
+- `stent/executor_wait.py`
 - `tests/test_wait_for.py`
 - docs/readme location where wait behavior is described
 
@@ -65,10 +65,10 @@ This plan turns the latest architecture review into a production-focused executi
 - Optional: add debug log when an existing signal key is overwritten.
 
 **Files**
-- `senpuki/executor_signals.py`
+- `stent/executor_signals.py`
 - backend signal upsert paths in:
-  - `senpuki/backend/sqlite.py`
-  - `senpuki/backend/postgres.py`
+  - `stent/backend/sqlite.py`
+  - `stent/backend/postgres.py`
 - `tests/test_signals.py`
 
 **Acceptance**
@@ -98,7 +98,7 @@ This plan turns the latest architecture review into a production-focused executi
 - Keep permit release semantics safe across chunk boundaries.
 
 **Files**
-- `senpuki/executor_orchestration.py`
+- `stent/executor_orchestration.py`
 - optional executor config surface if chunk size is exposed
 
 **Tests**
@@ -125,7 +125,7 @@ This plan turns the latest architecture review into a production-focused executi
 - Ensure observability remains useful without N=300k insert pressure.
 
 **Files**
-- `senpuki/executor_orchestration.py`
+- `stent/executor_orchestration.py`
 - optionally backend progress helper if batching is introduced
 
 **Acceptance**
@@ -150,9 +150,9 @@ This plan turns the latest architecture review into a production-focused executi
   - missing `retry_for` defaults to `[Exception]`.
 
 **Files**
-- `senpuki/backend/utils.py`
-- `senpuki/backend/sqlite.py`
-- `senpuki/backend/postgres.py`
+- `stent/backend/utils.py`
+- `stent/backend/sqlite.py`
+- `stent/backend/postgres.py`
 - tests in `tests/test_backend_correctness.py`
 
 **Acceptance**
@@ -176,12 +176,12 @@ This plan turns the latest architecture review into a production-focused executi
 - Confirm backend row parsing remains consistent and does not attach local timezone assumptions.
 
 **Files**
-- `senpuki/utils/time.py`
-- `senpuki/executor.py`
-- `senpuki/executor_worker.py`
-- `senpuki/executor_orchestration.py`
-- `senpuki/executor_signals.py`
-- `senpuki/backend/utils.py`
+- `stent/utils/time.py`
+- `stent/executor.py`
+- `stent/executor_worker.py`
+- `stent/executor_orchestration.py`
+- `stent/executor_signals.py`
+- `stent/backend/utils.py`
 
 **Acceptance**
 - No mixed aware/naive datetimes in core flows.
@@ -201,7 +201,7 @@ This plan turns the latest architecture review into a production-focused executi
 - Keep API internal (module-scoped usage only).
 
 **Files**
-- `senpuki/backend/utils.py`
+- `stent/backend/utils.py`
 
 **Acceptance**
 - Reduced risk of unsafe dynamic SQL reuse in future changes.

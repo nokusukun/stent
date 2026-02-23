@@ -1,4 +1,4 @@
-# Hardening Plan for Senpuki
+# Hardening Plan for Stent
 
 This plan turns the findings in `REVIEW.md` into an actionable implementation checklist. Read `REVIEW.md` first for context, rationale, and file references.
 

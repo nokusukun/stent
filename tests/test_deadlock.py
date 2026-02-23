@@ -2,16 +2,16 @@ import unittest
 import asyncio
 import os
 import logging
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 logging.basicConfig(level=logging.INFO)
 
-@Senpuki.durable()
+@Stent.durable()
 async def leaf_activity():
     return "done"
 
-@Senpuki.durable()
+@Stent.durable()
 async def deadlocking_orchestrator():
     # Schedules a leaf task and waits for it
     return await leaf_activity()
@@ -21,7 +21,7 @@ class TestDeadlock(unittest.IsolatedAsyncioTestCase):
         self.backend = get_test_backend(f"deadlock_{os.getpid()}")
         await self.backend.init_db()
         await clear_test_backend(self.backend)
-        self.executor = Senpuki(backend=self.backend)
+        self.executor = Stent(backend=self.backend)
 
     async def asyncTearDown(self):
         await self.executor.shutdown()

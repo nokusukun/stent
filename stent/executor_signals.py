@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Awaitable, Callable
 
-from senpuki.core import ExecutionProgress, SignalRecord, TaskRecord
+from stent.core import ExecutionProgress, SignalRecord, TaskRecord
 
 
 def signal_step_name(name: str) -> str:

@@ -1,10 +1,10 @@
 # Core Concepts
 
-This document explains the fundamental concepts in Senpuki that you need to understand to build effective durable workflows.
+This document explains the fundamental concepts in Stent that you need to understand to build effective durable workflows.
 
 ## Durable Functions
 
-A **durable function** is a Python async function decorated with `@Senpuki.durable()`. The decorator transforms the function into a task that can be:
+A **durable function** is a Python async function decorated with `@Stent.durable()`. The decorator transforms the function into a task that can be:
 
 - Persisted to a database
 - Distributed across workers
@@ -12,9 +12,9 @@ A **durable function** is a Python async function decorated with `@Senpuki.durab
 - Tracked for progress
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
-@Senpuki.durable()
+@Stent.durable()
 async def my_durable_function(x: int, y: int) -> int:
     return x + y
 ```
@@ -29,14 +29,14 @@ Standard Python functions exist only in memory. If your process crashes, all sta
 
 ## Orchestrators vs Activities
 
-Senpuki distinguishes between two types of durable functions:
+Stent distinguishes between two types of durable functions:
 
 ### Orchestrators
 
 An **orchestrator** is a durable function that coordinates other durable functions. It defines the workflow logic.
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def order_workflow(order_id: str) -> Result[dict, Exception]:
     # This is an orchestrator - it calls other durable functions
     customer = await fetch_customer(order_id)
@@ -62,7 +62,7 @@ Orchestrators:
 An **activity** is a leaf-node durable function that performs actual work.
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(max_attempts=3)
 )
 async def send_email(to: str, subject: str, body: str) -> bool:
@@ -148,7 +148,7 @@ A **task** represents a single function call within an execution. The root orche
 # Internally, when you call:
 result = await some_activity(arg)
 
-# Senpuki creates a TaskRecord:
+# Stent creates a TaskRecord:
 TaskRecord(
     id="task-uuid",
     execution_id="execution-uuid",
@@ -213,12 +213,12 @@ Task properties:
 
 ## Result Type
 
-Senpuki provides a Rust-inspired `Result` type for explicit error handling:
+Stent provides a Rust-inspired `Result` type for explicit error handling:
 
 ```python
-from senpuki import Result
+from stent import Result
 
-@Senpuki.durable()
+@Stent.durable()
 async def divide(a: int, b: int) -> Result[float, str]:
     if b == 0:
         return Result.Error("Division by zero")
@@ -260,7 +260,7 @@ value = result.or_raise()
 You can still use regular exceptions if you prefer:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def might_fail():
     if random.random() < 0.5:
         raise ValueError("Random failure")
@@ -313,7 +313,7 @@ Workers can limit concurrency:
 await executor.serve(max_concurrency=10)
 
 # Function-level: max 5 concurrent calls cluster-wide
-@Senpuki.durable(max_concurrent=5)
+@Stent.durable(max_concurrent=5)
 async def rate_limited_api_call():
     ...
 ```
@@ -326,7 +326,7 @@ Queues partition work for different worker pools:
 
 ```python
 # Assign function to a queue
-@Senpuki.durable(queue="high_priority")
+@Stent.durable(queue="high_priority")
 async def important_task():
     ...
 
@@ -346,7 +346,7 @@ Higher priority tasks are processed first:
 
 ```python
 # Higher priority function
-@Senpuki.durable(priority=10)
+@Stent.durable(priority=10)
 async def urgent_task():
     ...
 
@@ -359,7 +359,7 @@ await executor.dispatch(task, priority=10)
 Tags provide flexible filtering:
 
 ```python
-@Senpuki.durable(tags=["billing", "customer"])
+@Stent.durable(tags=["billing", "customer"])
 async def charge_customer():
     ...
 

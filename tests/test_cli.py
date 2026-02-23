@@ -4,8 +4,8 @@ from typing import Any, cast
 
 import pytest
 
-import senpuki.cli as cli
-from senpuki.core import ExecutionState, Result
+import stent.cli as cli
+from stent.core import ExecutionState, Result
 
 
 class _SpyBackend:
@@ -78,8 +78,8 @@ class _ShowExecutor:
 async def test_cli_initializes_and_closes_backend(monkeypatch):
     backend = _SpyBackend()
 
-    monkeypatch.setattr(cli.Senpuki.backends, "SQLiteBackend", staticmethod(lambda _db: backend))
-    monkeypatch.setattr(sys, "argv", ["senpuki", "list"])
+    monkeypatch.setattr(cli.Stent.backends, "SQLiteBackend", staticmethod(lambda _db: backend))
+    monkeypatch.setattr(sys, "argv", ["stent", "list"])
 
     result = await cli.main_async()
     assert result == 0
@@ -91,8 +91,8 @@ async def test_cli_initializes_and_closes_backend(monkeypatch):
 async def test_cli_closes_backend_when_command_errors(monkeypatch):
     backend = _SpyBackend(raise_on_list=True)
 
-    monkeypatch.setattr(cli.Senpuki.backends, "SQLiteBackend", staticmethod(lambda _db: backend))
-    monkeypatch.setattr(sys, "argv", ["senpuki", "list"])
+    monkeypatch.setattr(cli.Stent.backends, "SQLiteBackend", staticmethod(lambda _db: backend))
+    monkeypatch.setattr(sys, "argv", ["stent", "list"])
 
     with pytest.raises(RuntimeError, match="boom"):
         await cli.main_async()
@@ -110,8 +110,8 @@ async def test_cli_stats_uses_count_apis(monkeypatch):
 
     backend.list_executions = _forbidden_list_executions  # type: ignore[method-assign]
 
-    monkeypatch.setattr(cli.Senpuki.backends, "SQLiteBackend", staticmethod(lambda _db: backend))
-    monkeypatch.setattr(sys, "argv", ["senpuki", "stats"])
+    monkeypatch.setattr(cli.Stent.backends, "SQLiteBackend", staticmethod(lambda _db: backend))
+    monkeypatch.setattr(sys, "argv", ["stent", "stats"])
 
     result = await cli.main_async()
 

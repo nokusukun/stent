@@ -1,4 +1,4 @@
-# Senpuki Implementation Plan - 2.0
+# Stent Implementation Plan - 2.0
 
 This plan turns the identified review items into an execution-ready roadmap with clear sequencing, file-level scope, test strategy, and completion criteria.
 
@@ -28,9 +28,9 @@ This plan turns the identified review items into an execution-ready roadmap with
 - Retries are set back to `pending` with `lease_expires_at` delay, but claim logic checks `lease_expires_at` only for `running` tasks. This can cause immediate retry execution instead of delayed retry.
 
 **Files**
-- `senpuki/executor.py`
-- `senpuki/backend/sqlite.py`
-- `senpuki/backend/postgres.py`
+- `stent/executor.py`
+- `stent/backend/sqlite.py`
+- `stent/backend/postgres.py`
 
 **Implementation**
 - In retry path, set:
@@ -58,7 +58,7 @@ This plan turns the identified review items into an execution-ready roadmap with
 - One code path checks `if stored_val:` for idempotency result; falsey payloads can be treated as misses.
 
 **Files**
-- `senpuki/executor.py`
+- `stent/executor.py`
 
 **Implementation**
 - Replace truthy checks with explicit `is not None` for cache/idempotency payload retrieval.
@@ -79,8 +79,8 @@ This plan turns the identified review items into an execution-ready roadmap with
 - Redis notification subscriptions swallow timeout and the caller may fetch and return still-pending task state rather than raising timeout.
 
 **Files**
-- `senpuki/notifications/redis.py`
-- `senpuki/executor.py`
+- `stent/notifications/redis.py`
+- `stent/executor.py`
 
 **Implementation**
 - Make timeout explicit at notification boundary:
@@ -104,7 +104,7 @@ This plan turns the identified review items into an execution-ready roadmap with
 - `wait_for` treats `cancelled` as terminal, but `result_of` does not, causing inconsistent behavior.
 
 **Files**
-- `senpuki/executor.py`
+- `stent/executor.py`
 
 **Implementation**
 - Add `cancelled` to terminal states in `result_of`.
@@ -126,8 +126,8 @@ This plan turns the identified review items into an execution-ready roadmap with
 - `serve(..., tags=...)` passes tags to claim API but claim queries ignore them.
 
 **Files**
-- `senpuki/backend/sqlite.py`
-- `senpuki/backend/postgres.py`
+- `stent/backend/sqlite.py`
+- `stent/backend/postgres.py`
 - (if needed) helper utilities for tag matching
 
 **Implementation**
@@ -150,7 +150,7 @@ This plan turns the identified review items into an execution-ready roadmap with
 - CLI creates backend/executor but does not explicitly initialize or close backend resources.
 
 **Files**
-- `senpuki/cli.py`
+- `stent/cli.py`
 
 **Implementation**
 - Ensure `await backend.init_db()` before command execution.
@@ -172,10 +172,10 @@ This plan turns the identified review items into an execution-ready roadmap with
 - CLI stats executes broad list scans (`limit=10000`) to count records.
 
 **Files**
-- `senpuki/backend/base.py`
-- `senpuki/backend/sqlite.py`
-- `senpuki/backend/postgres.py`
-- `senpuki/cli.py`
+- `stent/backend/base.py`
+- `stent/backend/sqlite.py`
+- `stent/backend/postgres.py`
+- `stent/cli.py`
 
 **Implementation**
 - Extend backend protocol with:
@@ -199,7 +199,7 @@ This plan turns the identified review items into an execution-ready roadmap with
 - Current parser can accept partial matches from malformed strings.
 
 **Files**
-- `senpuki/utils/time.py`
+- `stent/utils/time.py`
 - related tests
 
 **Implementation**
@@ -224,7 +224,7 @@ This plan turns the identified review items into an execution-ready roadmap with
 - `now_utc()` name implies UTC but returns naive local time.
 
 **Files**
-- `senpuki/utils/time.py`
+- `stent/utils/time.py`
 - any call sites using `now_utc()`
 
 **Implementation Options**
@@ -243,8 +243,8 @@ This plan turns the identified review items into an execution-ready roadmap with
 
 **Files**
 - `pyproject.toml`
-- `senpuki/cli.py`
-- `senpuki/executor.py`
+- `stent/cli.py`
+- `stent/executor.py`
 - tests/examples flagged by type checker
 
 **Implementation**
@@ -263,8 +263,8 @@ This plan turns the identified review items into an execution-ready roadmap with
 - `executor.py` is too large and mixes many responsibilities.
 
 **Files**
-- `senpuki/executor.py`
-- new module files under `senpuki/` (to be introduced)
+- `stent/executor.py`
+- new module files under `stent/` (to be introduced)
 
 **Implementation**
 - Extract in stages behind same public API:
@@ -272,7 +272,7 @@ This plan turns the identified review items into an execution-ready roadmap with
   2. signal handling
   3. worker lifecycle and task handling
   4. dispatch/map orchestration helpers
-- Keep `Senpuki` external API unchanged.
+- Keep `Stent` external API unchanged.
 
 **Acceptance Criteria**
 - No public API change; all tests pass; easier module-level ownership.
@@ -285,9 +285,9 @@ This plan turns the identified review items into an execution-ready roadmap with
 - SQLite and Postgres backends duplicate mapping/serialization/query patterns.
 
 **Files**
-- `senpuki/backend/sqlite.py`
-- `senpuki/backend/postgres.py`
-- `senpuki/backend/utils.py`
+- `stent/backend/sqlite.py`
+- `stent/backend/postgres.py`
+- `stent/backend/utils.py`
 - optional new shared backend helper module
 
 **Implementation**

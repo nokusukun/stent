@@ -1,13 +1,13 @@
 # Parallel Execution
 
-This guide covers how to execute tasks concurrently using Senpuki's parallel execution features.
+This guide covers how to execute tasks concurrently using Stent's parallel execution features.
 
 ## Overview
 
-Senpuki supports two main approaches for parallel execution:
+Stent supports two main approaches for parallel execution:
 
 1. **`asyncio.gather`** - Standard Python approach, schedules immediately
-2. **`Senpuki.map`** - Optimized batch scheduling for large workloads
+2. **`Stent.map`** - Optimized batch scheduling for large workloads
 
 Both approaches release the orchestrator's worker slot while waiting, allowing other tasks to be processed.
 
@@ -17,15 +17,15 @@ The simplest way to run tasks in parallel:
 
 ```python
 import asyncio
-from senpuki import Senpuki
+from stent import Stent
 
-@Senpuki.durable()
+@Stent.durable()
 async def process_item(item_id: str) -> dict:
     # Process a single item
     await asyncio.sleep(1)  # Simulate work
     return {"id": item_id, "processed": True}
 
-@Senpuki.durable()
+@Stent.durable()
 async def parallel_workflow(item_ids: list[str]) -> list[dict]:
     # Schedule all tasks and wait for all to complete
     tasks = [process_item(item_id) for item_id in item_ids]
@@ -46,7 +46,7 @@ async def parallel_workflow(item_ids: list[str]) -> list[dict]:
 By default, `asyncio.gather` raises the first exception:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow_fail_fast(items: list[str]) -> list[dict]:
     tasks = [process_item(item) for item in items]
     
@@ -61,7 +61,7 @@ async def workflow_fail_fast(items: list[str]) -> list[dict]:
 Use `return_exceptions=True` to capture all results:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow_partial_success(items: list[str]) -> dict:
     tasks = [process_item(item) for item in items]
     
@@ -84,21 +84,21 @@ async def workflow_partial_success(items: list[str]) -> dict:
     }
 ```
 
-## Using Senpuki.map
+## Using Stent.map
 
-For large batches, `Senpuki.map` is more efficient:
+For large batches, `Stent.map` is more efficient:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def batch_workflow(item_ids: list[str]) -> list[dict]:
     # Batch creates all tasks in fewer database operations
-    results = await Senpuki.map(process_item, item_ids)
+    results = await Stent.map(process_item, item_ids)
     return results
 ```
 
 ### Benefits Over asyncio.gather
 
-| Aspect | asyncio.gather | Senpuki.map |
+| Aspect | asyncio.gather | Stent.map |
 |--------|---------------|-------------|
 | Task creation | One DB write per task | Batched writes |
 | Progress tracking | Individual | Batched |
@@ -108,13 +108,13 @@ async def batch_workflow(item_ids: list[str]) -> list[dict]:
 ### Example: Processing 1000 Items
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def large_batch_workflow(item_ids: list[str]) -> dict:
-    # With 1000 items, Senpuki.map is much faster
+    # With 1000 items, Stent.map is much faster
     # - Creates all tasks in batched DB operations
     # - Efficiently checks cache/idempotency
     
-    results = await Senpuki.map(process_item, item_ids)
+    results = await Stent.map(process_item, item_ids)
     
     return {
         "processed": len(results),
@@ -127,19 +127,19 @@ async def large_batch_workflow(item_ids: list[str]) -> dict:
 A common pattern for parallel processing:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def download_image(url: str) -> str:
     # Download and return local path
     path = f"/tmp/{hash(url)}.jpg"
     await http_client.download(url, path)
     return path
 
-@Senpuki.durable()
+@Stent.durable()
 async def process_image(path: str) -> dict:
     # Process image and return metadata
     return await image_processor.analyze(path)
 
-@Senpuki.durable()
+@Stent.durable()
 async def aggregate_results(results: list[dict]) -> dict:
     # Combine all results
     return {
@@ -147,7 +147,7 @@ async def aggregate_results(results: list[dict]) -> dict:
         "categories": list(set(r["category"] for r in results))
     }
 
-@Senpuki.durable()
+@Stent.durable()
 async def image_pipeline(urls: list[str]) -> dict:
     # Fan-out: Download all images in parallel
     download_tasks = [download_image(url) for url in urls]
@@ -170,12 +170,12 @@ async def image_pipeline(urls: list[str]) -> dict:
 Use `max_concurrent` to limit parallel executions:
 
 ```python
-@Senpuki.durable(max_concurrent=5)
+@Stent.durable(max_concurrent=5)
 async def rate_limited_api_call(data: dict) -> dict:
     # Max 5 concurrent calls across ALL workers
     return await external_api.call(data)
 
-@Senpuki.durable()
+@Stent.durable()
 async def workflow(items: list[dict]) -> list[dict]:
     # Even though we schedule all at once, only 5 run at a time
     tasks = [rate_limited_api_call(item) for item in items]
@@ -196,7 +196,7 @@ await executor.serve(max_concurrency=10)
 For fine-grained control:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def controlled_parallel(items: list[dict], batch_size: int = 10) -> list[dict]:
     all_results = []
     
@@ -209,7 +209,7 @@ async def controlled_parallel(items: list[dict], batch_size: int = 10) -> list[d
         
         # Optional: Add delay between batches
         if i + batch_size < len(items):
-            await Senpuki.sleep("1s")
+            await Stent.sleep("1s")
     
     return all_results
 ```
@@ -219,14 +219,14 @@ async def controlled_parallel(items: list[dict], batch_size: int = 10) -> list[d
 Orchestrators can call other orchestrators in parallel:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def process_region(region: str, data: dict) -> dict:
     # This is itself an orchestrator with multiple steps
     validated = await validate_for_region(region, data)
     processed = await process_in_region(region, validated)
     return await finalize_region(region, processed)
 
-@Senpuki.durable()
+@Stent.durable()
 async def multi_region_workflow(data: dict) -> dict:
     regions = ["us-east", "us-west", "eu-west", "ap-south"]
     
@@ -246,7 +246,7 @@ async def multi_region_workflow(data: dict) -> dict:
 Combine patterns as needed:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def complex_workflow(orders: list[dict]) -> dict:
     # Step 1: Validate all orders in parallel
     validation_tasks = [validate_order(order) for order in orders]
@@ -283,7 +283,7 @@ async def complex_workflow(orders: list[dict]) -> dict:
 ### Fail Fast (Default)
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def fail_fast_workflow(items: list) -> list:
     tasks = [process_item(item) for item in items]
     
@@ -295,7 +295,7 @@ async def fail_fast_workflow(items: list) -> list:
 ### Collect All Results
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def collect_all_workflow(items: list) -> dict:
     tasks = [process_item(item) for item in items]
     
@@ -314,7 +314,7 @@ async def collect_all_workflow(items: list) -> dict:
 ### Retry Failed Items
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def retry_failed_workflow(items: list) -> dict:
     results = await asyncio.gather(
         *[process_item(item) for item in items],
@@ -329,7 +329,7 @@ async def retry_failed_workflow(items: list) -> dict:
     
     if failed_items:
         # Wait and retry failed items
-        await Senpuki.sleep("5s")
+        await Stent.sleep("5s")
         retry_results = await asyncio.gather(
             *[process_item(item) for item in failed_items],
             return_exceptions=True
@@ -359,7 +359,7 @@ Each parallel task creates database operations:
 - Progress updates
 
 For very large batches (1000+ items), consider:
-- Using `Senpuki.map` for batch operations
+- Using `Stent.map` for batch operations
 - Processing in smaller batches
 - Adding delays between batches
 
@@ -382,7 +382,7 @@ results = await asyncio.gather(*[big_task(i) for i in range(10000)])
 Consider streaming results for very large batches:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def streaming_workflow(items: list) -> int:
     processed = 0
     
@@ -400,7 +400,7 @@ async def streaming_workflow(items: list) -> int:
 
 1. **Choose the right tool**:
    - Small batches (< 50): `asyncio.gather`
-   - Large batches (50+): `Senpuki.map`
+   - Large batches (50+): `Stent.map`
 
 2. **Use `return_exceptions=True`** for robustness
 

@@ -2,31 +2,41 @@ import unittest
 import asyncio
 import os
 from datetime import datetime, timedelta
-import senpuki # import the package to access senpuki.sleep
-from senpuki.executor import Senpuki, Backends
-from senpuki.registry import registry
-from senpuki.utils.time import parse_duration
+import stent # import the package to access stent.sleep
+from stent.executor import Stent, Backends
+from stent.registry import registry
+from stent.utils.time import parse_duration
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 # Define some tasks
-@Senpuki.durable()
+@Stent.durable()
 async def quick_task(x: int):
     return x * 2
 
-@Senpuki.durable()
+@Stent.durable()
 async def sleeping_workflow():
-    await senpuki.sleep("1s")
+    await stent.sleep("1s")
     return "done"
+
+@Stent.durable()
+async def asyncio_sleep_workflow():
+    await asyncio.sleep(1.5)  # above threshold → becomes durable
+    return "slept"
+
+@Stent.durable()
+async def short_asyncio_sleep_workflow():
+    await asyncio.sleep(0.05)  # below threshold → stays real sleep
+    return "quick"
 
 class TestScheduling(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.backend = get_test_backend(f"scheduling_{os.getpid()}")
         await self.backend.init_db()
         await clear_test_backend(self.backend)
-        self.senpuki = Senpuki(backend=self.backend)
+        self.stent = Stent(backend=self.backend)
 
     async def asyncTearDown(self):
-        await self.senpuki.shutdown()
+        await self.stent.shutdown()
         await cleanup_test_backend(self.backend)
 
     async def test_parse_duration_extensions(self):
@@ -36,14 +46,14 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
 
     async def test_schedule_delayed_execution(self):
         # Schedule to run in 2 seconds
-        exec_id = await self.senpuki.schedule("2s", quick_task, 10)
+        exec_id = await self.stent.schedule("2s", quick_task, 10)
         
         # Immediately check state
-        state = await self.senpuki.state_of(exec_id)
+        state = await self.stent.state_of(exec_id)
         self.assertEqual(state.state, "pending")
         
         # Start a worker in background
-        worker_task = asyncio.create_task(self.senpuki.serve(poll_interval=0.1))
+        worker_task = asyncio.create_task(self.stent.serve(poll_interval=0.1))
         
         try:
             # Wait 1 second - should still be pending (not picked up)
@@ -63,7 +73,7 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
             
             # Should be done now
             # Use wait_for to be robust
-            result = await self.senpuki.wait_for(exec_id, expiry=5.0)
+            result = await self.stent.wait_for(exec_id, expiry=5.0)
             self.assertEqual(result.or_raise(), 20)
             
         finally:
@@ -73,17 +83,17 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
             except asyncio.CancelledError:
                 pass
 
-    async def test_senpuki_sleep(self):
+    async def test_stent_sleep(self):
         # We need to register sleeping_workflow manually if it's not picked up? 
         # Decorator handles it.
         
         start = datetime.now()
-        exec_id = await self.senpuki.dispatch(sleeping_workflow)
+        exec_id = await self.stent.dispatch(sleeping_workflow)
         
-        worker_task = asyncio.create_task(self.senpuki.serve(poll_interval=0.1))
+        worker_task = asyncio.create_task(self.stent.serve(poll_interval=0.1))
         
         try:
-            result = await self.senpuki.wait_for(exec_id, expiry=10.0) # Increased expiry
+            result = await self.stent.wait_for(exec_id, expiry=10.0) # Increased expiry
             duration = (datetime.now() - start).total_seconds()
             
             self.assertEqual(result.or_raise(), "done")
@@ -95,6 +105,50 @@ class TestScheduling(unittest.IsolatedAsyncioTestCase):
                 await worker_task
             except asyncio.CancelledError:
                 pass
+
+    async def test_asyncio_sleep_becomes_durable_above_threshold(self):
+        """asyncio.sleep(1.5) inside a durable function should become durable sleep."""
+        start = datetime.now()
+        exec_id = await self.stent.dispatch(asyncio_sleep_workflow)
+
+        worker_task = asyncio.create_task(self.stent.serve(poll_interval=0.1))
+        try:
+            result = await self.stent.wait_for(exec_id, expiry=10.0)
+            duration = (datetime.now() - start).total_seconds()
+            self.assertEqual(result.or_raise(), "slept")
+            self.assertGreater(duration, 1.0)
+
+            # Verify a sleep task was created (proof it went through durable path)
+            tasks = await self.backend.list_tasks_for_execution(exec_id)
+            sleep_tasks = [t for t in tasks if t.step_name == "stent.sleep"]
+            self.assertEqual(len(sleep_tasks), 1)
+        finally:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+
+    async def test_asyncio_sleep_below_threshold_stays_real(self):
+        """asyncio.sleep(0.05) inside a durable function should stay as real sleep."""
+        exec_id = await self.stent.dispatch(short_asyncio_sleep_workflow)
+
+        worker_task = asyncio.create_task(self.stent.serve(poll_interval=0.1))
+        try:
+            result = await self.stent.wait_for(exec_id, expiry=5.0)
+            self.assertEqual(result.or_raise(), "quick")
+
+            # Verify no sleep task was created (stayed as real asyncio.sleep)
+            tasks = await self.backend.list_tasks_for_execution(exec_id)
+            sleep_tasks = [t for t in tasks if t.step_name == "stent.sleep"]
+            self.assertEqual(len(sleep_tasks), 0)
+        finally:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

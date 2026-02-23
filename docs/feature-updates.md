@@ -28,21 +28,21 @@ This document tracks major updates that landed after the initial documentation s
 - CLI now always initializes the backend before command execution and closes it in all exit paths.
 
 ### 022 - Count-Based CLI Stats
-- `senpuki stats` and `senpuki watch` now use backend count queries instead of scan-heavy list operations.
+- `stent stats` and `stent watch` now use backend count queries instead of scan-heavy list operations.
 
 ### 034 - CLI Execution Context Display
-- `senpuki show <execution-id>` now prints execution `Counters` and `Custom State` sections when present.
+- `stent show <execution-id>` now prints execution `Counters` and `Custom State` sections when present.
 
 ## Execution Context and Runtime APIs
 
 ### 033 - Execution Context Counters and Custom State
-- Added `Senpuki.context(...)` to access execution-scoped counters and custom key-value state.
+- Added `Stent.context(...)` to access execution-scoped counters and custom key-value state.
 - `state_of()` now returns `counters` and `custom_state`.
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def flow():
-    ctx = Senpuki.context(counters={"progress": 0}, state={"phase": "start"})
+    ctx = Stent.context(counters={"progress": 0}, state={"phase": "start"})
     ctx.counters("progress").add(1)
     ctx.state("phase").set("running")
 ```
@@ -63,7 +63,7 @@ async def flow():
 
 ## Related References
 
-- API: `docs/api-reference/senpuki.md`
+- API: `docs/api-reference/stent.md`
 - Backends: `docs/api-reference/backends.md`
 - Monitoring/CLI guide: `docs/guides/monitoring.md`
 - Worker routing: `docs/guides/workers.md`

@@ -4,8 +4,8 @@ import asyncio
 from datetime import datetime
 from typing import Awaitable, Callable
 
-from senpuki.core import ExecutionState, TaskRecord
-from senpuki.notifications.base import NotificationBackend
+from stent.core import ExecutionState, TaskRecord
+from stent.notifications.base import NotificationBackend
 
 TASK_TERMINAL_STATES = ("completed", "failed")
 EXECUTION_TERMINAL_STATES = ("completed", "failed", "timed_out", "cancelled")

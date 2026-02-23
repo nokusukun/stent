@@ -2,20 +2,20 @@ import redis.asyncio as redis
 import json
 import asyncio
 from typing import AsyncIterator, Dict, Any, Optional
-from senpuki.notifications.base import NotificationBackend
+from stent.notifications.base import NotificationBackend
 
 class RedisBackend(NotificationBackend):
     def __init__(self, url: str):
         self.redis = redis.from_url(url)
 
     async def notify_task_completed(self, task_id: str) -> None:
-        await self.redis.publish(f"senpuki:task:{task_id}", json.dumps({
+        await self.redis.publish(f"stent:task:{task_id}", json.dumps({
             "task_id": task_id,
             "state": "completed"
         }))
 
     async def notify_task_updated(self, task_id: str, state: str) -> None:
-        await self.redis.publish(f"senpuki:task:{task_id}", json.dumps({
+        await self.redis.publish(f"stent:task:{task_id}", json.dumps({
             "task_id": task_id,
             "state": state
         }))
@@ -27,7 +27,7 @@ class RedisBackend(NotificationBackend):
         expiry: float | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         pubsub = self.redis.pubsub()
-        channel = f"senpuki:task:{task_id}"
+        channel = f"stent:task:{task_id}"
         await pubsub.subscribe(channel)
         
         try:
@@ -54,7 +54,7 @@ class RedisBackend(NotificationBackend):
             await pubsub.close()
 
     async def notify_execution_updated(self, execution_id: str, state: str) -> None:
-        await self.redis.publish(f"senpuki:execution:{execution_id}", json.dumps({
+        await self.redis.publish(f"stent:execution:{execution_id}", json.dumps({
             "execution_id": execution_id,
             "state": state
         }))
@@ -66,7 +66,7 @@ class RedisBackend(NotificationBackend):
         expiry: float | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         pubsub = self.redis.pubsub()
-        channel = f"senpuki:execution:{execution_id}"
+        channel = f"stent:execution:{execution_id}"
         await pubsub.subscribe(channel)
         
         try:

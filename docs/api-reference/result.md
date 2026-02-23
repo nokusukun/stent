@@ -5,7 +5,7 @@ The `Result` type provides Rust-inspired explicit error handling. It's a generic
 ## Import
 
 ```python
-from senpuki import Result
+from stent import Result
 ```
 
 ## Type Signature
@@ -93,7 +93,7 @@ result.or_raise()  # Raises Exception("Something went wrong")
 ### Basic Pattern Matching
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def process_order(order_id: str) -> Result[dict, str]:
     order = await fetch_order(order_id)
     
@@ -118,7 +118,7 @@ else:
 ### With Exception Errors
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def divide(a: int, b: int) -> Result[float, Exception]:
     try:
         return Result.Ok(a / b)
@@ -135,7 +135,7 @@ if not result.ok:
 ### Chaining Results
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow() -> Result[str, Exception]:
     # Each step returns a Result
     user_result = await fetch_user("user-123")
@@ -156,7 +156,7 @@ async def workflow() -> Result[str, Exception]:
 ### Converting to Exceptions
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def main_workflow():
     result = await might_fail()
     
@@ -168,7 +168,7 @@ async def main_workflow():
 
 ## Serialization
 
-The `Result` type is automatically serialized by Senpuki's JSON serializer:
+The `Result` type is automatically serialized by Stent's JSON serializer:
 
 ```python
 # Result is serialized as:
@@ -187,7 +187,7 @@ When deserialized, it becomes a `Result` instance again.
 Use proper generic type hints for better IDE support:
 
 ```python
-from senpuki import Result
+from stent import Result
 
 # Result with int value and str error
 async def divide(a: int, b: int) -> Result[int, str]:
@@ -200,7 +200,7 @@ async def process_users(ids: list[str]) -> Result[list[dict], Exception]:
     ...
 
 # Result in orchestrator return
-@Senpuki.durable()
+@Stent.durable()
 async def main_workflow(data: dict) -> Result[dict, Exception]:
     ...
 ```
@@ -210,7 +210,7 @@ async def main_workflow(data: dict) -> Result[dict, Exception]:
 ### Using Result
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def process_with_result() -> Result[str, str]:
     data = await fetch_data()
     if not data:
@@ -233,7 +233,7 @@ else:
 ### Using Exceptions
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def process_with_exceptions() -> str:
     data = await fetch_data()
     if not data:
@@ -267,4 +267,4 @@ except (ValueError, RuntimeError) as e:
 - You're interacting with code that uses exceptions
 - Simpler is better for your use case
 
-Both approaches work well with Senpuki - use whichever fits your coding style and requirements.
+Both approaches work well with Stent - use whichever fits your coding style and requirements.

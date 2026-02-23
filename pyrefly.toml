@@ -2,7 +2,7 @@
 
 # Directories to analyze
 project-includes = [
-    "senpuki",
+    "stent",
     "examples",
     "tests",
 ]

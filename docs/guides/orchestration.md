@@ -4,24 +4,24 @@ This guide covers how to compose durable functions into workflows, including orc
 
 ## Orchestrators vs Activities
 
-In Senpuki, you'll write two types of durable functions:
+In Stent, you'll write two types of durable functions:
 
 ### Activities
 
 Activities perform actual work - they have side effects and interact with external systems:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def send_email(to: str, subject: str, body: str) -> bool:
     # Actual side effect: sends an email
     return await email_client.send(to, subject, body)
 
-@Senpuki.durable()
+@Stent.durable()
 async def charge_payment(customer_id: str, amount: int) -> str:
     # Actual side effect: charges payment
     return await payment_gateway.charge(customer_id, amount)
 
-@Senpuki.durable()
+@Stent.durable()
 async def update_database(record_id: str, data: dict) -> bool:
     # Actual side effect: updates database
     await db.update(record_id, data)
@@ -33,7 +33,7 @@ async def update_database(record_id: str, data: dict) -> bool:
 Orchestrators coordinate activities and define workflow logic:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def order_workflow(order: dict) -> Result[dict, Exception]:
     # Step 1: Validate
     validated = await validate_order(order)
@@ -64,7 +64,7 @@ async def order_workflow(order: dict) -> Result[dict, Exception]:
 Activities are executed in sequence when you `await` them one after another:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def sequential_workflow(data: dict) -> dict:
     # Each step waits for the previous to complete
     step1_result = await first_step(data)
@@ -78,7 +78,7 @@ async def sequential_workflow(data: dict) -> dict:
 Use standard Python conditionals:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def conditional_workflow(order: dict) -> Result[str, str]:
     # Check order type
     if order["type"] == "express":
@@ -102,7 +102,7 @@ async def conditional_workflow(order: dict) -> Result[str, str]:
 Use standard Python loops:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def batch_workflow(items: list[dict]) -> dict:
     results = []
     errors = []
@@ -126,7 +126,7 @@ async def batch_workflow(items: list[dict]) -> dict:
 You can implement custom retry logic in orchestrators:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow_with_retry(data: dict) -> Result[dict, str]:
     max_retries = 3
     
@@ -138,7 +138,7 @@ async def workflow_with_retry(data: dict) -> Result[dict, str]:
         
         if attempt < max_retries - 1:
             # Wait before retrying (durable sleep)
-            await Senpuki.sleep(f"{2 ** attempt}s")  # 1s, 2s, 4s
+            await Stent.sleep(f"{2 ** attempt}s")  # 1s, 2s, 4s
     
     return Result.Error("Operation failed after retries")
 ```
@@ -148,14 +148,14 @@ async def workflow_with_retry(data: dict) -> Result[dict, str]:
 Orchestrators can call other orchestrators:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def payment_workflow(order_id: str, customer_id: str, amount: int) -> dict:
     # Sub-workflow handles all payment logic
     authorization = await authorize_payment(customer_id, amount)
     capture = await capture_payment(authorization["auth_id"])
     return {"payment_id": capture["id"], "status": "captured"}
 
-@Senpuki.durable()
+@Stent.durable()
 async def order_workflow(order: dict) -> Result[dict, Exception]:
     # Validate first
     await validate_order(order)
@@ -184,22 +184,22 @@ async def order_workflow(order: dict) -> Result[dict, Exception]:
 
 ### Durable Sleep
 
-Use `Senpuki.sleep()` for delays that don't block workers:
+Use `Stent.sleep()` for delays that don't block workers:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def scheduled_workflow(notification_id: str) -> None:
     # Send immediate notification
     await send_notification(notification_id, "Starting process")
     
     # Wait 24 hours (worker is free during this time)
-    await Senpuki.sleep("24h")
+    await Stent.sleep("24h")
     
     # Send follow-up
     await send_notification(notification_id, "Process check-in")
     
     # Wait another week
-    await Senpuki.sleep("7d")
+    await Stent.sleep("7d")
     
     # Final notification
     await send_notification(notification_id, "Process complete")
@@ -210,13 +210,13 @@ async def scheduled_workflow(notification_id: str) -> None:
 Use signals for human-in-the-loop or external event workflows:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def approval_workflow(request: dict) -> Result[dict, str]:
     # Send approval request
     await notify_approvers(request["id"], request["approvers"])
     
     # Wait for approval signal (could be hours or days)
-    approval = await Senpuki.wait_for_signal("approval")
+    approval = await Stent.wait_for_signal("approval")
     
     if approval["approved"]:
         await execute_request(request)
@@ -242,13 +242,13 @@ await executor.send_signal(
 Combine signals with timeouts:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def approval_with_timeout(request: dict) -> Result[dict, str]:
     await notify_approvers(request["id"], request["approvers"])
     
     # Create a timeout task
     timeout_task = asyncio.create_task(wait_for_timeout(request["id"], hours=48))
-    signal_task = asyncio.create_task(Senpuki.wait_for_signal("approval"))
+    signal_task = asyncio.create_task(Stent.wait_for_signal("approval"))
     
     # Wait for either
     done, pending = await asyncio.wait(
@@ -274,7 +274,7 @@ async def approval_with_timeout(request: dict) -> Result[dict, str]:
 ### Try/Except in Orchestrators
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def robust_workflow(data: dict) -> Result[dict, str]:
     try:
         result = await risky_operation(data)
@@ -298,7 +298,7 @@ async def robust_workflow(data: dict) -> Result[dict, str]:
 For distributed transactions, implement compensation:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def booking_saga(trip: dict) -> Result[dict, str]:
     compensations = []
     
@@ -341,7 +341,7 @@ Orchestrators should be deterministic - the same inputs should produce the same 
 ### Do
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def deterministic_workflow(order: dict) -> dict:
     # Good: Logic depends only on input
     if order["total"] > 1000:
@@ -359,7 +359,7 @@ async def deterministic_workflow(order: dict) -> dict:
 ### Don't
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def non_deterministic_workflow(order: dict) -> dict:
     # Bad: Different result on replay
     import random
@@ -382,18 +382,18 @@ async def non_deterministic_workflow(order: dict) -> dict:
 
 ```python
 # Wrap non-deterministic operations in activities
-@Senpuki.durable()
+@Stent.durable()
 async def get_random_value() -> float:
     import random
     return random.random()
 
-@Senpuki.durable()
+@Stent.durable()
 async def get_current_time() -> str:
     from datetime import datetime
     return datetime.now().isoformat()
 
 # Use in orchestrator
-@Senpuki.durable()
+@Stent.durable()
 async def workflow() -> dict:
     random_val = await get_random_value()  # Stored, replayed consistently
     timestamp = await get_current_time()   # Stored, replayed consistently

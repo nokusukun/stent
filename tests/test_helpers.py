@@ -3,18 +3,18 @@ import asyncio
 import os
 import logging
 import contextlib
-from senpuki import Senpuki, Result, sleep
-from senpuki.executor import _original_sleep
+from stent import Stent, Result, sleep
+from stent.executor import _original_sleep
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 logger = logging.getLogger(__name__)
 
-@Senpuki.durable()
+@Stent.durable()
 async def sleep_task():
     await sleep("0.2s")
     return "done"
 
-@Senpuki.durable()
+@Stent.durable()
 async def noop_task():
     pass
 
@@ -23,7 +23,7 @@ class TestHelpers(unittest.IsolatedAsyncioTestCase):
         self.backend = get_test_backend(f"helpers_{os.getpid()}")
         await self.backend.init_db()
         await clear_test_backend(self.backend) # Ensure clean slate
-        self.executor = Senpuki(backend=self.backend)
+        self.executor = Stent(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
     async def asyncTearDown(self):
@@ -35,8 +35,9 @@ class TestHelpers(unittest.IsolatedAsyncioTestCase):
         await self.executor.shutdown()
         await cleanup_test_backend(self.backend)
 
-    async def test_asyncio_sleep_not_patched(self):
-        self.assertIs(asyncio.sleep, _original_sleep)
+    async def test_asyncio_sleep_patched_but_transparent_outside_context(self):
+        """asyncio.sleep is patched but behaves normally outside durable context."""
+        self.assertIsNot(asyncio.sleep, _original_sleep)
 
         observed = []
 

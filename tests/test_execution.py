@@ -5,21 +5,21 @@ import shutil
 import contextlib
 import uuid
 from datetime import datetime, timedelta
-from senpuki import Senpuki, Result, RetryPolicy
-from senpuki.executor import UnregisteredFunctionError
-from senpuki.registry import registry, FunctionRegistry, FunctionMetadata
+from stent import Stent, Result, RetryPolicy
+from stent.executor import UnregisteredFunctionError, _original_sleep
+from stent.registry import registry, FunctionRegistry, FunctionMetadata
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 # Define some test functions globally so pickle/registry can find them
-@Senpuki.durable()
+@Stent.durable()
 async def simple_task(x: int) -> int:
     return x * 2
 
-@Senpuki.durable()
+@Stent.durable()
 async def failing_task():
     raise ValueError("I failed")
 
-@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=0.01, backoff_factor=1.0))
+@Stent.durable(retry_policy=RetryPolicy(max_attempts=3, initial_delay=0.01, backoff_factor=1.0))
 async def retryable_task(succeed_on_attempt: int):
     pass
 
@@ -28,15 +28,15 @@ RECOVERY_TEST_STATE = {"first_run": True}
 DELAYED_RETRY_COUNTER = {}
 FALSEY_IDEMPOTENT_COUNTER = {}
 
-@Senpuki.durable()
+@Stent.durable()
 async def recovery_task():
     # If it's the first run (simulated crash), we sleep to allow cancellation
     if RECOVERY_TEST_STATE["first_run"]:
         RECOVERY_TEST_STATE["first_run"] = False
-        await asyncio.sleep(10) 
+        await _original_sleep(10)  # real sleep to simulate slow work for crash test
     return "recovered"
 
-@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=4, initial_delay=0.01))
+@Stent.durable(retry_policy=RetryPolicy(max_attempts=4, initial_delay=0.01))
 async def stateful_retry_task(exec_id_for_counter: str):
     count = ATTEMPT_COUNTER.get(exec_id_for_counter, 0) + 1
     ATTEMPT_COUNTER[exec_id_for_counter] = count
@@ -45,7 +45,7 @@ async def stateful_retry_task(exec_id_for_counter: str):
     return count
 
 
-@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=2, initial_delay=1.0, backoff_factor=1.0))
+@Stent.durable(retry_policy=RetryPolicy(max_attempts=2, initial_delay=1.0, backoff_factor=1.0))
 async def delayed_retry_task(case_id: str):
     count = DELAYED_RETRY_COUNTER.get(case_id, 0) + 1
     DELAYED_RETRY_COUNTER[case_id] = count
@@ -54,42 +54,42 @@ async def delayed_retry_task(case_id: str):
     return count
 
 
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def falsey_idempotent_task(case_id: str, value):
     FALSEY_IDEMPOTENT_COUNTER[case_id] = FALSEY_IDEMPOTENT_COUNTER.get(case_id, 0) + 1
     return value
 
 
-@Senpuki.durable()
+@Stent.durable()
 async def falsey_idempotent_workflow(case_id: str, value):
     return await falsey_idempotent_task(case_id, value)
 
-@Senpuki.durable(queue="high_priority_queue", tags=["data_processing"])
+@Stent.durable(queue="high_priority_queue", tags=["data_processing"])
 async def high_priority_data_task(data: str) -> str:
     return f"Processed {data} with high priority"
 
-@Senpuki.durable(queue="low_priority_queue", tags=["reporting"])
+@Stent.durable(queue="low_priority_queue", tags=["reporting"])
 async def low_priority_report_task(report_id: str) -> str:
     return f"Generated report {report_id}"
 
 
-@Senpuki.durable(tags=["alpha"])
+@Stent.durable(tags=["alpha"])
 async def alpha_tagged_task(value: str) -> str:
     return f"alpha:{value}"
 
 
-@Senpuki.durable(tags=["beta"])
+@Stent.durable(tags=["beta"])
 async def beta_tagged_task(value: str) -> str:
     return f"beta:{value}"
 
 
-@Senpuki.durable()
+@Stent.durable()
 async def untagged_task(value: str) -> str:
     return f"untagged:{value}"
 
 LONG_TASK_INVOCATIONS = 0
 
-@Senpuki.durable()
+@Stent.durable()
 async def guarded_long_activity(duration: float) -> int:
     global LONG_TASK_INVOCATIONS
     LONG_TASK_INVOCATIONS += 1
@@ -102,7 +102,7 @@ async def registry_isolated_workflow(value: int) -> int:
 
 DLQ_REPLAY_ATTEMPTS: dict[str, int] = {}
 
-@Senpuki.durable(retry_policy=RetryPolicy(max_attempts=1, initial_delay=0.01))
+@Stent.durable(retry_policy=RetryPolicy(max_attempts=1, initial_delay=0.01))
 async def flaky_once_task(key: str) -> str:
     attempt = DLQ_REPLAY_ATTEMPTS.get(key, 0)
     DLQ_REPLAY_ATTEMPTS[key] = attempt + 1
@@ -116,7 +116,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         self.backend = get_test_backend(f"{os.getpid()}_{id(self)}")
         await self.backend.init_db()
         await clear_test_backend(self.backend)
-        self.executor = Senpuki(backend=self.backend)
+        self.executor = Stent(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
     async def asyncTearDown(self):
@@ -166,7 +166,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         except asyncio.CancelledError:
             pass
 
-        custom_executor = Senpuki(backend=self.backend, function_registry=custom_registry)
+        custom_executor = Stent(backend=self.backend, function_registry=custom_registry)
         custom_worker = asyncio.create_task(custom_executor.serve(poll_interval=0.05))
 
         try:
@@ -300,7 +300,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         lp_exec_id = await self.executor.dispatch(low_priority_report_task, "monthly_report")
 
         # Start a worker only for high_priority_queue
-        hp_executor = Senpuki(backend=self.backend)
+        hp_executor = Stent(backend=self.backend)
         hp_worker_task = asyncio.create_task(hp_executor.serve(queues=["high_priority_queue"], poll_interval=0.1))
         
         hp_result = await self._wait_for_result(hp_exec_id)
@@ -318,7 +318,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         await hp_executor.shutdown()
 
         # Start a worker for low_priority_queue
-        lp_executor = Senpuki(backend=self.backend)
+        lp_executor = Stent(backend=self.backend)
         lp_worker_task = asyncio.create_task(lp_executor.serve(queues=["low_priority_queue"], poll_interval=0.1))
         
         lp_result = await self._wait_for_result(lp_exec_id)
@@ -344,7 +344,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         beta_exec_id = await self.executor.dispatch(beta_tagged_task, "B")
         untagged_exec_id = await self.executor.dispatch(untagged_task, "U")
 
-        alpha_executor = Senpuki(backend=self.backend)
+        alpha_executor = Stent(backend=self.backend)
         alpha_worker_task = asyncio.create_task(alpha_executor.serve(tags=["alpha"], poll_interval=0.1))
 
         try:
@@ -364,7 +364,7 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
                 pass
             await alpha_executor.shutdown()
 
-        beta_executor = Senpuki(backend=self.backend)
+        beta_executor = Stent(backend=self.backend)
         beta_worker_task = asyncio.create_task(beta_executor.serve(tags=["beta"], poll_interval=0.1))
 
         try:
@@ -468,8 +468,8 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
         lease_duration = timedelta(seconds=0.3)
         heartbeat_interval = timedelta(seconds=0.1)
 
-        worker_exec1 = Senpuki(backend=self.backend)
-        worker_exec2 = Senpuki(backend=self.backend)
+        worker_exec1 = Stent(backend=self.backend)
+        worker_exec2 = Stent(backend=self.backend)
         worker1 = asyncio.create_task(
             worker_exec1.serve(
                 lease_duration=lease_duration,
@@ -552,3 +552,63 @@ class TestExecution(unittest.IsolatedAsyncioTestCase):
                 break
             await asyncio.sleep(0.1)
         return await self.executor.result_of(exec_id)
+
+
+class TestAutoDispatch(unittest.IsolatedAsyncioTestCase):
+    """Tests for the Stent.use() / auto-dispatch feature."""
+
+    async def asyncSetUp(self):
+        self.backend = get_test_backend(f"autodispatch_{os.getpid()}_{id(self)}")
+        await self.backend.init_db()
+        await clear_test_backend(self.backend)
+
+    async def asyncTearDown(self):
+        Stent.reset()
+        await cleanup_test_backend(self.backend)
+
+    def test_init_stores_default_executor(self):
+        self.assertIsNone(Stent._default_executor)
+        executor = Stent.use(backend=self.backend)
+        self.assertIs(Stent._default_executor, executor)
+
+    def test_reset_clears_default_executor(self):
+        Stent.use(backend=self.backend)
+        self.assertIsNotNone(Stent._default_executor)
+        Stent.reset()
+        self.assertIsNone(Stent._default_executor)
+
+    async def test_auto_dispatch_returns_result(self):
+        """Calling a durable function with a default executor auto-dispatches and returns the result."""
+        executor = Stent.use(backend=self.backend)
+        worker = asyncio.create_task(executor.serve(poll_interval=0.05))
+        try:
+            result = await simple_task(21)
+            self.assertEqual(result, 42)
+        finally:
+            worker.cancel()
+            try:
+                await worker
+            except asyncio.CancelledError:
+                pass
+            await executor.shutdown()
+
+    async def test_auto_dispatch_propagates_errors(self):
+        """Errors from auto-dispatched functions are re-raised to the caller."""
+        executor = Stent.use(backend=self.backend)
+        worker = asyncio.create_task(executor.serve(poll_interval=0.05))
+        try:
+            with self.assertRaises(Exception):
+                await failing_task()
+        finally:
+            worker.cancel()
+            try:
+                await worker
+            except asyncio.CancelledError:
+                pass
+            await executor.shutdown()
+
+    async def test_no_default_executor_runs_locally(self):
+        """Without a default executor, durable functions still run locally."""
+        self.assertIsNone(Stent._default_executor)
+        result = await simple_task(10)
+        self.assertEqual(result, 20)

@@ -3,18 +3,18 @@ import asyncio
 import os
 import logging
 import time
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@Senpuki.durable()
+@Stent.durable()
 async def parallel_worker(duration: float) -> float:
     await asyncio.sleep(duration)
     return duration
 
-@Senpuki.durable()
+@Stent.durable()
 async def parallel_orchestrator(count: int, duration: float) -> list[float]:
     tasks = []
     for _ in range(count):
@@ -23,7 +23,7 @@ async def parallel_orchestrator(count: int, duration: float) -> list[float]:
     results = await asyncio.gather(*tasks)
     return results
 
-@Senpuki.durable()
+@Stent.durable()
 async def fan_out_fan_in_workflow(count: int, duration: float) -> float:
     results = await parallel_orchestrator(count, duration)
     return sum(results)
@@ -33,7 +33,7 @@ class TestParallel(unittest.IsolatedAsyncioTestCase):
         self.backend = get_test_backend(f"parallel_{os.getpid()}")
         await self.backend.init_db()
         await clear_test_backend(self.backend)
-        self.executor = Senpuki(backend=self.backend)
+        self.executor = Stent(backend=self.backend)
         # We need high concurrency
         self.worker_task = asyncio.create_task(self.executor.serve(max_concurrency=10, poll_interval=0.1))
 

@@ -2,7 +2,7 @@ import asyncio
 import asyncpg
 import os
 
-DSN = os.environ.get("SENPUKI_TEST_PG_DSN")
+DSN = os.environ.get("STENT_TEST_PG_DSN")
 
 async def main():
     if not DSN:

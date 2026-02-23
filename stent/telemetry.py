@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 import functools
 import logging
-from senpuki import Senpuki
+from stent import Stent
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +33,14 @@ F = TypeVar('F', bound=Callable[..., Any])
 
 def instrument(tracer_provider: Any = None) -> bool:
     """
-    Instruments the Senpuki library with OpenTelemetry.
+    Instruments the Stent library with OpenTelemetry.
     Returns True if instrumentation was installed, False otherwise.
     """
     if not _HAS_OTEL or _trace is None:
-        logger.warning("OpenTelemetry not installed; skipping Senpuki instrumentation.")
+        logger.warning("OpenTelemetry not installed; skipping Stent instrumentation.")
         return False
 
-    tracer = _trace.get_tracer("senpuki", tracer_provider=tracer_provider)
+    tracer = _trace.get_tracer("stent", tracer_provider=tracer_provider)
     
     _instrument_executor(tracer)
     return True
@@ -54,7 +54,7 @@ def _instrument_executor(tracer: Any) -> None:
     so _trace, _Status, and _StatusCode are guaranteed to be non-None.
     """
     # Idempotency check
-    if getattr(Senpuki.dispatch, "_is_otel_instrumented", False):
+    if getattr(Stent.dispatch, "_is_otel_instrumented", False):
         return
 
     # Local references to ensure type checker knows these are non-None
@@ -63,22 +63,22 @@ def _instrument_executor(tracer: Any) -> None:
     status_cls = cast(Any, _Status)
     status_code_cls = cast(Any, _StatusCode)
 
-    original_dispatch = Senpuki.dispatch
-    original_handle_task = Senpuki._handle_task
+    original_dispatch = Stent.dispatch
+    original_handle_task = Stent._handle_task
     
     @functools.wraps(original_dispatch)
-    async def dispatch_wrapper(self: Senpuki, fn: Any, *args: Any, **kwargs: Any) -> str:
+    async def dispatch_wrapper(self: Stent, fn: Any, *args: Any, **kwargs: Any) -> str:
         # Resolve name properly if it's a wrapped function
         name = "unknown"
         if hasattr(fn, "__name__"):
             name = fn.__name__
         
-        with tracer.start_as_current_span(f"senpuki.dispatch {name}", kind=trace_mod.SpanKind.PRODUCER) as span:
-            span.set_attribute("senpuki.function", name)
+        with tracer.start_as_current_span(f"stent.dispatch {name}", kind=trace_mod.SpanKind.PRODUCER) as span:
+            span.set_attribute("stent.function", name)
             
             try:
                 exec_id = await original_dispatch(self, fn, *args, **kwargs)
-                span.set_attribute("senpuki.execution_id", exec_id)
+                span.set_attribute("stent.execution_id", exec_id)
                 return exec_id
             except Exception as e:
                 span.record_exception(e)
@@ -86,16 +86,16 @@ def _instrument_executor(tracer: Any) -> None:
                 raise
 
     setattr(dispatch_wrapper, "_is_otel_instrumented", True)
-    Senpuki.dispatch = dispatch_wrapper  # type: ignore[method-assign]
+    Stent.dispatch = dispatch_wrapper  # type: ignore[method-assign]
     
     @functools.wraps(original_handle_task)
-    async def handle_task_wrapper(self: Senpuki, task: Any, worker_id: str, *args: Any, **kwargs: Any) -> None:
+    async def handle_task_wrapper(self: Stent, task: Any, worker_id: str, *args: Any, **kwargs: Any) -> None:
         # Consumer span
-        with tracer.start_as_current_span(f"senpuki.execute {task.step_name}", kind=trace_mod.SpanKind.CONSUMER) as span:
-             span.set_attribute("senpuki.task_id", task.id)
-             span.set_attribute("senpuki.execution_id", task.execution_id)
-             span.set_attribute("senpuki.step", task.step_name)
-             span.set_attribute("senpuki.worker_id", worker_id)
+        with tracer.start_as_current_span(f"stent.execute {task.step_name}", kind=trace_mod.SpanKind.CONSUMER) as span:
+             span.set_attribute("stent.task_id", task.id)
+             span.set_attribute("stent.execution_id", task.execution_id)
+             span.set_attribute("stent.step", task.step_name)
+             span.set_attribute("stent.worker_id", worker_id)
              
              try:
                  await original_handle_task(self, task, worker_id, *args, **kwargs)
@@ -112,4 +112,4 @@ def _instrument_executor(tracer: Any) -> None:
                  raise
 
     setattr(handle_task_wrapper, "_is_otel_instrumented", True)
-    Senpuki._handle_task = handle_task_wrapper  # type: ignore[method-assign]
+    Stent._handle_task = handle_task_wrapper  # type: ignore[method-assign]

@@ -1,11 +1,11 @@
-# Senpuki Library Review (Principal Engineer) - v2 Post-Hardening
+# Stent Library Review (Principal Engineer) - v2 Post-Hardening
 
 ## Scope
-This review assesses the Senpuki library after the hardening work completed in v1. Focus areas: remaining production risks, code quality, and polish items.
+This review assesses the Stent library after the hardening work completed in v1. Focus areas: remaining production risks, code quality, and polish items.
 
 ## Executive Summary
 
-Senpuki is a distributed durable-functions library for Python. The v1 hardening addressed critical production issues. The library is now **production-ready for moderate workloads** with awareness of the remaining caveats.
+Stent is a distributed durable-functions library for Python. The v1 hardening addressed critical production issues. The library is now **production-ready for moderate workloads** with awareness of the remaining caveats.
 
 **Production Readiness: 8/10**
 
@@ -233,7 +233,7 @@ Pickle allows arbitrary code execution.
 
 ---
 
-#### L6: @Senpuki.durable() Uses Class Registry
+#### L6: @Stent.durable() Uses Class Registry
 **File**: executor.py:309-346
 ```python
 @classmethod

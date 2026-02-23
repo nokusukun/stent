@@ -5,7 +5,7 @@ from typing import Protocol
 
 class MetricsRecorder(Protocol):
     """
-    Receives callbacks when important Senpuki events occur so hosts can export
+    Receives callbacks when important Stent events occur so hosts can export
     metrics to Prometheus, StatsD, etc.
     """
 

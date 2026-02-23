@@ -1,10 +1,10 @@
 # Comparison with Other Libraries
 
-How Senpuki compares to other Python workflow orchestration and task queue libraries.
+How Stent compares to other Python workflow orchestration and task queue libraries.
 
 ## Quick Comparison
 
-| Feature | Temporal | Celery | Dramatiq | Prefect | Airflow | Azure DF | Restate | **Senpuki** |
+| Feature | Temporal | Celery | Dramatiq | Prefect | Airflow | Azure DF | Restate | **Stent** |
 |---------|----------|--------|----------|---------|---------|----------|---------|-------------|
 | **Durable Execution** | Yes | No | No | Partial | No | Yes | Yes | **Yes** |
 | **Setup Complexity** | High | Medium | Low | Low-Med | High | Medium | Low | **Very Low** |
@@ -25,7 +25,7 @@ How Senpuki compares to other Python workflow orchestration and task queue libra
 - Separate worker processes
 - Understanding of task queues, namespaces, activities vs workflows
 
-**Senpuki requires:**
+**Stent requires:**
 - SQLite file (dev) or PostgreSQL (prod)
 - That's it
 
@@ -49,22 +49,22 @@ async def process_order(order_id: str) -> dict:
 ```
 
 ```python
-# Senpuki - just decorated functions
-@Senpuki.durable()
+# Stent - just decorated functions
+@Stent.durable()
 async def process_order(order_id: str) -> dict:
     return {"order_id": order_id, "status": "done"}
 
-@Senpuki.durable()
+@Stent.durable()
 async def order_workflow(order_id: str) -> dict:
     return await process_order(order_id)
 ```
 
-**Choose Senpuki over Temporal when:**
+**Choose Stent over Temporal when:**
 - You need durability but can't justify the infrastructure complexity
 - You want to embed workflows in an existing Python app
 - Your team is small and ops overhead matters
 
-**Choose Temporal over Senpuki when:**
+**Choose Temporal over Stent when:**
 - You need enterprise features (versioning, visibility, multi-language)
 - You have dedicated infrastructure/DevOps teams
 - You're building mission-critical financial systems
@@ -88,8 +88,8 @@ def workflow():
 ```
 
 ```python
-# Senpuki - workflow resumes from last completed step
-@Senpuki.durable()
+# Stent - workflow resumes from last completed step
+@Stent.durable()
 async def workflow():
     result1 = await step1()  # Completed and persisted
     result2 = await step2()  # Worker crashes, but on restart...
@@ -99,19 +99,19 @@ async def workflow():
 
 **Other differences:**
 
-| Aspect | Celery/Dramatiq | Senpuki |
+| Aspect | Celery/Dramatiq | Stent |
 |--------|-----------------|---------|
 | Message broker | Required (RabbitMQ/Redis) | Not needed |
 | Async support | Limited (gevent/eventlet) | Native async/await |
 | Workflow state | Lost on crash | Persisted |
 | Task chaining | Canvas primitives | Native Python |
 
-**Choose Senpuki over Celery/Dramatiq when:**
+**Choose Stent over Celery/Dramatiq when:**
 - Workflows must survive crashes mid-execution
 - You want native async/await
 - You don't want to manage a message broker
 
-**Choose Celery/Dramatiq over Senpuki when:**
+**Choose Celery/Dramatiq over Stent when:**
 - You only need simple fire-and-forget tasks
 - You already have RabbitMQ/Redis infrastructure
 - You need Celery's mature ecosystem (beat, flower, etc.)
@@ -125,7 +125,7 @@ async def workflow():
 **Key philosophical difference:**
 
 - **Airflow/Prefect**: DAG-based, schedule-driven, batch-oriented
-- **Senpuki**: Code-first, event-driven, application-oriented
+- **Stent**: Code-first, event-driven, application-oriented
 
 ```python
 # Airflow - DAG defines structure, scheduled execution
@@ -137,8 +137,8 @@ with DAG("etl_pipeline", schedule="@daily") as dag:
 ```
 
 ```python
-# Senpuki - regular async functions, triggered by events
-@Senpuki.durable()
+# Stent - regular async functions, triggered by events
+@Stent.durable()
 async def process_order(order: dict) -> Result:
     validated = await validate_order(order)
     charged = await charge_payment(validated)
@@ -149,12 +149,12 @@ async def process_order(order: dict) -> Result:
 await executor.dispatch(process_order, order_data)
 ```
 
-**Choose Senpuki over Prefect/Airflow when:**
+**Choose Stent over Prefect/Airflow when:**
 - Building application workflows (order processing, user onboarding)
 - Workflows are triggered by events, not schedules
 - You want minimal infrastructure
 
-**Choose Prefect/Airflow over Senpuki when:**
+**Choose Prefect/Airflow over Stent when:**
 - Building data pipelines and ETL jobs
 - You need scheduled batch processing
 - You want a visual DAG UI
@@ -175,20 +175,20 @@ def orchestrator(context: df.DurableOrchestrationContext):
 ```
 
 ```python
-# Senpuki - native async, any infrastructure
-@Senpuki.durable()
+# Stent - native async, any infrastructure
+@Stent.durable()
 async def orchestrator(input1):
     result1 = await step1(input1)
     result2 = await step2(result1)
     return result2
 ```
 
-**Choose Senpuki over Azure DF when:**
+**Choose Stent over Azure DF when:**
 - You're not on Azure
 - You want standard async/await instead of generators
 - You want to run on your own infrastructure
 
-**Choose Azure DF over Senpuki when:**
+**Choose Azure DF over Stent when:**
 - You're already on Azure Functions
 - You want serverless scaling
 - You need Azure's managed infrastructure
@@ -213,28 +213,28 @@ class OrderService:
 ```
 
 ```python
-# Senpuki - pure Python, no external server
-@Senpuki.durable()
+# Stent - pure Python, no external server
+@Stent.durable()
 async def process_order(order: Order) -> Result:
     validated = await validate(order)  # Automatically durable
     return await charge(validated)
 ```
 
-**Choose Senpuki over Restate when:**
+**Choose Stent over Restate when:**
 - You want a pure Python solution
 - You don't want to run a separate server binary
 - You prefer simpler decorator-based API
 
-**Choose Restate over Senpuki when:**
+**Choose Restate over Stent when:**
 - You need multi-language support (Restate supports TS, Java, Go)
 - You want Restate's virtual objects model
 - You prefer Restate's state management approach
 
 ---
 
-## Summary: When to Choose Senpuki
+## Summary: When to Choose Stent
 
-Senpuki is ideal when you need:
+Stent is ideal when you need:
 
 1. **True durability** without Temporal's infrastructure complexity
 2. **Native Python async** throughout
@@ -247,7 +247,7 @@ It fills the gap between simple task queues and enterprise workflow platforms.
 ```
                     Simple                                    Complex
                       │                                          │
-    Celery ──── Dramatiq ──── Senpuki ──── Restate ──── Temporal
+    Celery ──── Dramatiq ──── Stent ──── Restate ──── Temporal
                                 │
                          You are here
                     (Durability + Simplicity)

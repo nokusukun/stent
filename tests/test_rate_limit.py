@@ -3,38 +3,38 @@ import asyncio
 import uuid
 import os
 from datetime import datetime, timedelta
-from senpuki import Senpuki
-from senpuki.registry import registry
+from stent import Stent
+from stent.registry import registry
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 # Globals for pickles
-@Senpuki.durable(max_concurrent=1)
+@Stent.durable(max_concurrent=1)
 async def limited_task(idx: int):
     # We log to a global list (careful with parallel tests, but IsolatedAsyncioTestCase runs sequentially usually? No, but global var is shared)
     # Better to return timestamps
-    await Senpuki.sleep(timedelta(seconds=0.5))
+    await Stent.sleep(timedelta(seconds=0.5))
     return (idx, datetime.now())
 
-@Senpuki.durable()
+@Stent.durable()
 async def orchestrator():
     t1 = limited_task(1)
     t2 = limited_task(2)
     t3 = limited_task(3)
-    return await Senpuki.gather(t1, t2, t3)
+    return await Stent.gather(t1, t2, t3)
 
-@Senpuki.durable(max_concurrent=1)
+@Stent.durable(max_concurrent=1)
 async def serial_task(idx: int):
-    await Senpuki.sleep(timedelta(seconds=0.2))
+    await Stent.sleep(timedelta(seconds=0.2))
     return ("serial", idx, datetime.now())
 
-@Senpuki.durable(max_concurrent=5)
+@Stent.durable(max_concurrent=5)
 async def parallel_task(idx: int):
-    await Senpuki.sleep(timedelta(seconds=0.2))
+    await Stent.sleep(timedelta(seconds=0.2))
     return ("parallel", idx, datetime.now())
 
-@Senpuki.durable()
+@Stent.durable()
 async def mixed_workflow():
-    return await Senpuki.gather(
+    return await Stent.gather(
         serial_task(1), serial_task(2),
         parallel_task(1), parallel_task(2)
     )
@@ -45,7 +45,7 @@ class TestRateLimit(unittest.IsolatedAsyncioTestCase):
         self.backend = get_test_backend(self.test_id)
         await self.backend.init_db()
         await clear_test_backend(self.backend)
-        self.executor = Senpuki(backend=self.backend)
+        self.executor = Stent(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1, max_concurrency=10))
 
     async def asyncTearDown(self):

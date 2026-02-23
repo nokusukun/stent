@@ -4,7 +4,7 @@
 Updated the execution details CLI view to display execution-scoped counters and custom state introduced by the execution context API.
 
 ## Key Changes
-* `senpuki/cli.py`
+* `stent/cli.py`
   * `show_execution` now prints a `Counters` section when `state.counters` is present.
   * `show_execution` now prints a `Custom State` section when `state.custom_state` is present.
   * Output is sorted by key for stable readability.
@@ -13,7 +13,7 @@ Updated the execution details CLI view to display execution-scoped counters and 
 
 ## Usage/Configuration
 ```bash
-senpuki execution show <execution-id>
+stent execution show <execution-id>
 ```
 
 The output now includes `Counters` and `Custom State` sections when available.

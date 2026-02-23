@@ -4,54 +4,54 @@ import functools
 import uuid
 import logging
 from datetime import datetime, timedelta
-from typing import Callable, Awaitable, Any, List, Literal, Optional, cast
+from typing import Callable, Awaitable, Any, ClassVar, List, Literal, Optional, cast
 from contextvars import ContextVar
 
-from senpuki.core import (
+from stent.core import (
     Result, RetryPolicy, TaskRecord, ExecutionProgress, 
     ExecutionState, DeadLetterRecord
 )
-from senpuki.backend.base import Backend
-from senpuki.notifications.base import NotificationBackend
-from senpuki.registry import registry, FunctionMetadata, FunctionRegistry
-from senpuki.utils.serialization import Serializer, JsonSerializer
-from senpuki.utils.idempotency import default_idempotency_key
-from senpuki.utils.time import parse_duration
-from senpuki.executor_signals import persist_signal_and_wake_waiter, resolve_signal_wait
-from senpuki.executor_orchestration import (
+from stent.backend.base import Backend
+from stent.notifications.base import NotificationBackend
+from stent.registry import registry, FunctionMetadata, FunctionRegistry
+from stent.utils.serialization import Serializer, JsonSerializer
+from stent.utils.idempotency import default_idempotency_key
+from stent.utils.time import parse_duration
+from stent.executor_signals import persist_signal_and_wake_waiter, resolve_signal_wait
+from stent.executor_orchestration import (
     build_dispatch_records,
     execute_map_batch,
     normalize_dispatch_timing,
     persist_dispatch_records,
     schedule_activity_and_wait,
 )
-from senpuki.executor_wait import wait_for_execution_terminal, wait_for_task_terminal
-from senpuki.executor_worker import lease_heartbeat_loop, run_claimed_task
-from senpuki.executor_context import ExecutionContext, current_execution_context
-from senpuki.metrics import MetricsRecorder, NoOpMetricsRecorder
+from stent.executor_wait import wait_for_execution_terminal, wait_for_task_terminal
+from stent.executor_worker import lease_heartbeat_loop, run_claimed_task
+from stent.executor_context import ExecutionContext, current_execution_context
+from stent.metrics import MetricsRecorder, NoOpMetricsRecorder
 
 from dataclasses import dataclass, field, replace
 
 logger = logging.getLogger(__name__)
 
-class SenpukiLogFilter(logging.Filter):
+class StentLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.senpuki_execution_id = current_execution_id.get()
-        record.senpuki_task_id = current_task_id.get()
-        record.senpuki_worker_id = current_worker_id.get()
+        record.stent_execution_id = current_execution_id.get()
+        record.stent_task_id = current_task_id.get()
+        record.stent_worker_id = current_worker_id.get()
         return True
 
 def install_structured_logging(target: logging.Logger | None = None) -> None:
     """
-    Adds a logging.Filter that injects Senpuki context (execution/task id) into
+    Adds a logging.Filter that injects Stent context (execution/task id) into
     every log record. Integrate it with your formatter via
-    %(senpuki_execution_id)s etc.
+    %(stent_execution_id)s etc.
     """
-    logger_obj = target or logging.getLogger("senpuki")
+    logger_obj = target or logging.getLogger("stent")
     for existing in getattr(logger_obj, "filters", []):
-        if isinstance(existing, SenpukiLogFilter):
+        if isinstance(existing, StentLogFilter):
             return
-    logger_obj.addFilter(SenpukiLogFilter())
+    logger_obj.addFilter(StentLogFilter())
 
 install_structured_logging(logger)
 
@@ -63,7 +63,7 @@ class UnregisteredFunctionError(RuntimeError):
     def __init__(self, function_name: str):
         message = (
             f"No durable registration found for '{function_name}'. "
-            "Decorate the function with @Senpuki.durable() or register it on the "
+            "Decorate the function with @Stent.durable() or register it on the "
             "FunctionRegistry provided to the executor."
         )
         super().__init__(message)
@@ -133,7 +133,7 @@ class WorkerLifecycle:
 class Backends:
     @staticmethod
     def SQLiteBackend(path: str) -> Backend:
-        from senpuki.backend.sqlite import SQLiteBackend
+        from stent.backend.sqlite import SQLiteBackend
         return SQLiteBackend(path)
 
     @staticmethod
@@ -143,28 +143,117 @@ class Backends:
 
     @staticmethod
     def PostgresBackend(dsn: str) -> Backend:
-        from senpuki.backend.postgres import PostgresBackend
+        from stent.backend.postgres import PostgresBackend
         return PostgresBackend(dsn)
 
 class Notifications:
     @staticmethod
     def RedisBackend(url: str) -> NotificationBackend:
-        from senpuki.notifications.redis import RedisBackend
+        from stent.notifications.redis import RedisBackend
         return RedisBackend(url)
 
 # Capture original sleep before any patching
 _original_sleep = asyncio.sleep
 
-current_execution_id: ContextVar[str | None] = ContextVar("senpuki_execution_id", default=None)
-current_task_id: ContextVar[str | None] = ContextVar("senpuki_task_id", default=None)
-current_worker_semaphore: ContextVar[asyncio.Semaphore | None] = ContextVar("senpuki_worker_semaphore", default=None)
-current_permit_holder: ContextVar[PermitHolder | None] = ContextVar("senpuki_permit_holder", default=None)
-current_worker_id: ContextVar[str | None] = ContextVar("senpuki_worker_id", default=None)
+class DurableFunction:
+    """Wrapper returned by @Stent.durable(). Callable like a normal async
+    function, but also exposes .map() and .starmap() for batch dispatch."""
 
-class Senpuki:
+    def __init__(self, meta: FunctionMetadata):
+        self._meta = meta
+        functools.update_wrapper(self, meta.fn)
+
+    async def __call__(self, *args, **kwargs):
+        return await Stent._call_durable_stub(self._meta, args, kwargs)
+
+    async def map(self, iterable) -> list[Any]:
+        """Dispatch this function for each item in *iterable* (single arg per call).
+
+        ``await square.map([1, 2, 3])``  ➜  ``[square(1), square(2), square(3)]``
+        """
+        return await self._map_internal(((item,), {}) for item in iterable)
+
+    async def starmap(self, iterable) -> list[Any]:
+        """Dispatch this function for each entry in *iterable*, unpacking args.
+
+        Each entry can be:
+        - a tuple of positional args:  ``(a, b)``  ➜  ``fn(a, b)``
+        - a (tuple, dict) pair:        ``((a,), {"k": v})``  ➜  ``fn(a, k=v)``
+
+        ``await send_email.starmap([("alice", "hi"), ("bob", "hey")])``
+        """
+        def _normalise(entry):
+            if isinstance(entry, dict):
+                return ((), entry)
+            if isinstance(entry, (list, tuple)) and len(entry) == 2 and isinstance(entry[1], dict):
+                return (tuple(entry[0]), entry[1])
+            return (tuple(entry) if isinstance(entry, (list, tuple)) else (entry,), {})
+        return await self._map_internal(_normalise(e) for e in iterable)
+
+    async def _map_internal(self, args_iter) -> list[Any]:
+        executor: Stent | None = current_executor.get()
+        if not executor:
+            executor = Stent._default_executor
+        if not executor:
+            return await asyncio.gather(*[self._meta.fn(*a, **kw) for a, kw in args_iter])
+
+        return await execute_map_batch(
+            executor=executor,
+            meta=self._meta,
+            args_list=list(args_iter),
+            exec_id=current_execution_id.get() or "",
+            parent_id=current_task_id.get() or "",
+            permit_holder=current_permit_holder.get(),
+        )
+
+
+current_execution_id: ContextVar[str | None] = ContextVar("stent_execution_id", default=None)
+current_task_id: ContextVar[str | None] = ContextVar("stent_task_id", default=None)
+current_worker_semaphore: ContextVar[asyncio.Semaphore | None] = ContextVar("stent_worker_semaphore", default=None)
+current_permit_holder: ContextVar[PermitHolder | None] = ContextVar("stent_permit_holder", default=None)
+current_worker_id: ContextVar[str | None] = ContextVar("stent_worker_id", default=None)
+
+class Stent:
     backends = Backends
     notifications = Notifications
     default_registry: FunctionRegistry = registry
+    _default_executor: ClassVar[Optional[Stent]] = None
+
+    @classmethod
+    def use(
+        cls,
+        backend: Backend,
+        serializer: Serializer | Literal["json", "pickle"] = "json",
+        notification_backend: NotificationBackend | None = None,
+        poll_min_interval: float = 0.1,
+        poll_max_interval: float = 5.0,
+        poll_backoff_factor: float = 2.0,
+        function_registry: FunctionRegistry | None = None,
+        metrics: MetricsRecorder | None = None,
+    ) -> Stent:
+        """Configure a default executor for auto-dispatch.
+
+        After calling this, any ``@Stent.durable()`` function called outside
+        of a worker context will automatically dispatch through this executor
+        and wait for the result.
+        """
+        instance = cls(
+            backend=backend,
+            serializer=serializer,
+            notification_backend=notification_backend,
+            poll_min_interval=poll_min_interval,
+            poll_max_interval=poll_max_interval,
+            poll_backoff_factor=poll_backoff_factor,
+            function_registry=function_registry,
+            metrics=metrics,
+        )
+        cls._default_executor = instance
+        return instance
+
+    @classmethod
+    def reset(cls):
+        """Clear the default executor (useful for test teardown)."""
+        cls._default_executor = None
 
     def __init__(
         self,
@@ -186,7 +275,7 @@ class Senpuki:
                 self.serializer = JsonSerializer()
             else:
                  # Local import to avoid circular dependency if pickle serializer was here
-                from senpuki.utils.serialization import PickleSerializer
+                from stent.utils.serialization import PickleSerializer
                 self.serializer = PickleSerializer()
         else:
             self.serializer = serializer
@@ -206,14 +295,14 @@ class Senpuki:
         self._register_builtin_tasks()
 
     def _register_builtin_tasks(self):
-        if self.registry.get("senpuki.sleep"):
+        if self.registry.get("stent.sleep"):
             return
 
         async def sleep_impl(duration: float):
             pass
             
         meta = FunctionMetadata(
-            name="senpuki.sleep",
+            name="stent.sleep",
             fn=sleep_impl,
             cached=False,
             retry_policy=RetryPolicy(),
@@ -290,7 +379,7 @@ class Senpuki:
         # Local import or direct call to global sleep if available in scope
         # Since 'sleep' is defined at the end of this file, we can't call it directly if it's not defined yet.
         # But methods are bound at runtime.
-        # However, 'sleep' is defined AFTER 'Senpuki' class.
+        # However, 'sleep' is defined AFTER 'Stent' class.
         # We can use 'current_executor' directly here.
         executor = current_executor.get()
         if executor:
@@ -299,18 +388,21 @@ class Senpuki:
             d = parse_duration(duration)
             await _original_sleep(d.total_seconds())
 
-    async def sleep_instance(self, duration: str | dict | timedelta):
+    async def sleep_instance(self, duration: str | dict | timedelta | int | float):
         """
-        Sleep for a specific duration. 
+        Sleep for a specific duration.
         This releases the worker to process other tasks while waiting.
         """
-        d = parse_duration(duration)
-        meta = self.registry.get("senpuki.sleep")
+        if isinstance(duration, (int, float)):
+            d = timedelta(seconds=duration)
+        else:
+            d = parse_duration(duration)
+        meta = self.registry.get("stent.sleep")
         if not meta:
             self._register_builtin_tasks()
-            meta = self.registry.get("senpuki.sleep")
+            meta = self.registry.get("stent.sleep")
         if not meta:
-            raise RuntimeError("senpuki.sleep not registered")
+            raise RuntimeError("stent.sleep not registered")
         
         # Schedule the sleep task to run AFTER the duration.
         # The orchestrator will wait for it to complete.
@@ -347,12 +439,7 @@ class Senpuki:
                 max_concurrent=max_concurrent,
             )
             reg.register(meta)
-
-            @functools.wraps(fn)
-            async def stub(*args, **kwargs):
-                return await cls._call_durable_stub(meta, args, kwargs)
-
-            return stub
+            return DurableFunction(meta)
         return decorator
 
     @classmethod
@@ -371,15 +458,19 @@ class Senpuki:
 
     @classmethod
     async def map(
-        cls, 
-        fn: Callable[..., Awaitable[Any]], 
+        cls,
+        fn: Callable[..., Awaitable[Any]],
         iterable: Any
     ) -> List[Any]:
+        """Batch-dispatch *fn* for each item in *iterable*.
+
+        Prefer ``fn.map(items)`` instead.  This classmethod is kept for
+        backwards compatibility.
         """
-        Efficiently schedules and waits for a function to be applied to each item in the iterable.
-        Equivalent to `await asyncio.gather(*[fn(item) for item in iterable])` but with batch scheduling optimization.
-        """
-        executor: Optional[Senpuki] = current_executor.get()
+        if isinstance(fn, DurableFunction):
+            return await fn.map(iterable)
+
+        executor: Optional[Stent] = current_executor.get()
         if not executor:
             return await asyncio.gather(*[fn(item) for item in iterable])
 
@@ -392,7 +483,7 @@ class Senpuki:
         return await execute_map_batch(
             executor=executor,
             meta=meta,
-            iterable=iterable,
+            args_list=[((item,), {}) for item in iterable],
             exec_id=current_execution_id.get() or "",
             parent_id=current_task_id.get() or "",
             permit_holder=current_permit_holder.get(),
@@ -402,9 +493,9 @@ class Senpuki:
     async def gather(cls, *tasks, **kwargs):
         """
         Alias for asyncio.gather. 
-        Note: If you pass function calls (e.g. `senpuki.gather(func(1), func(2))`), 
+        Note: If you pass function calls (e.g. `stent.gather(func(1), func(2))`), 
         they are scheduled immediately when called, not batched by gather.
-        Use `senpuki.map` for batch scheduling optimization if applicable.
+        Use `stent.map` for batch scheduling optimization if applicable.
         
         Supports `return_exceptions=True`.
         """
@@ -439,10 +530,22 @@ class Senpuki:
         executor = current_executor.get() # Get the current executor if any
         exec_id = current_execution_id.get()
         
-        # If no executor in context, it's a local call/unit test.
+        # If no executor in context, check for a default executor for auto-dispatch.
+        # If neither exists, fall through to a direct local call (unit test / no-runtime mode).
         if not executor:
-            logger.debug(f"STUB: {meta.name} running locally (no executor context)")
-            return await meta.fn(*args, **kwargs)
+            executor = cls._default_executor
+            if not executor:
+                logger.debug(f"STUB: {meta.name} running locally (no executor context)")
+                return await meta.fn(*args, **kwargs)
+
+            # Auto-dispatch: create a full execution and wait for a worker to process it.
+            exec_id = await executor.dispatch(meta.fn, *args, **kwargs)
+            result = await executor.wait_for(exec_id)
+            if result.ok:
+                return result.value
+            if isinstance(result.error, BaseException):
+                raise result.error
+            raise Exception(str(result.error))
 
         # Now we know we are within an executor's context (i.e., this is a distributed call)
 
@@ -1027,12 +1130,21 @@ class Senpuki:
             # logger.info(f"DEBUG: Finished _handle_task for {task.step_name} ({task.id})")
 
 # Context var for executor instance
-current_executor: ContextVar[Optional[Senpuki]] = ContextVar("senpuki_executor", default=None)
+current_executor: ContextVar[Optional[Stent]] = ContextVar("stent_executor", default=None)
 
 
 
-Senpuki.backends = Backends
-Senpuki.notifications = Notifications
+Stent.backends = Backends
+Stent.notifications = Notifications
+
+# ---------------------------------------------------------------------------
+# Durable sleep threshold (seconds).  Any ``asyncio.sleep(n)`` call made
+# inside a durable execution where *n* >= this value is automatically
+# promoted to a durable sleep that releases the worker.  Sleeps below
+# the threshold use the real ``asyncio.sleep``.
+# ---------------------------------------------------------------------------
+DURABLE_SLEEP_THRESHOLD: float = 1.0
+
 
 async def sleep(duration: str | dict | timedelta):
     """
@@ -1045,4 +1157,19 @@ async def sleep(duration: str | dict | timedelta):
     else:
         # Fallback for local testing or non-durable usage
         d = parse_duration(duration)
-        await asyncio.sleep(d.total_seconds())
+        await _original_sleep(d.total_seconds())
+
+
+async def _durable_sleep_wrapper(delay, result=None, *, _real_sleep=_original_sleep):
+    """Drop-in replacement for ``asyncio.sleep`` that promotes long sleeps
+    to durable sleeps when running inside a Stent execution context."""
+    executor: Stent | None = current_executor.get()
+    if executor and isinstance(delay, (int, float)) and delay >= DURABLE_SLEEP_THRESHOLD:
+        await executor.sleep_instance(delay)
+        return result
+    return await _real_sleep(delay, result)
+
+
+# Patch asyncio.sleep so that user code written with the standard library
+# automatically benefits from durable sleep inside Stent workers.
+asyncio.sleep = _durable_sleep_wrapper  # type: ignore[assignment]

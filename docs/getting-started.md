@@ -1,24 +1,24 @@
 # Getting Started
 
-This guide will walk you through installing Senpuki and creating your first durable workflow.
+This guide will walk you through installing Stent and creating your first durable workflow.
 
 ## Installation
 
-Install Senpuki using pip:
+Install Stent using pip:
 
 ```bash
-pip install senpuki
+pip install stent
 ```
 
 Or using uv:
 
 ```bash
-uv add senpuki
+uv add stent
 ```
 
 ### Dependencies
 
-Senpuki automatically installs the following dependencies:
+Stent automatically installs the following dependencies:
 
 | Package | Purpose |
 |---------|---------|
@@ -36,19 +36,19 @@ pip install opentelemetry-api opentelemetry-sdk
 
 ## Quick Start
 
-Here's the minimal code to get Senpuki running:
+Here's the minimal code to get Stent running:
 
 ```python
 import asyncio
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 
 # 1. Define a durable function
-@Senpuki.durable()
+@Stent.durable()
 async def greet(name: str) -> str:
     return f"Hello, {name}!"
 
 # 2. Define an orchestrator
-@Senpuki.durable()
+@Stent.durable()
 async def greeting_workflow(names: list[str]) -> Result[list[str], Exception]:
     greetings = []
     for name in names:
@@ -59,9 +59,9 @@ async def greeting_workflow(names: list[str]) -> Result[list[str], Exception]:
 # 3. Run everything
 async def main():
     # Create backend and executor
-    backend = Senpuki.backends.SQLiteBackend("senpuki.db")
+    backend = Stent.backends.SQLiteBackend("stent.db")
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Start a worker in the background
     worker_task = asyncio.create_task(executor.serve())
@@ -84,7 +84,7 @@ if __name__ == "__main__":
 
 ## Your First Workflow
 
-Let's build a more realistic workflow that demonstrates key Senpuki features.
+Let's build a more realistic workflow that demonstrates key Stent features.
 
 ### Step 1: Define Activities
 
@@ -92,10 +92,10 @@ Activities are the leaf-node functions that do actual work:
 
 ```python
 import asyncio
-from senpuki import Senpuki, RetryPolicy
+from stent import Stent, RetryPolicy
 
 # Activity with retry policy for unreliable operations
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=3,
         initial_delay=1.0,
@@ -108,14 +108,14 @@ async def fetch_user_data(user_id: str) -> dict:
     await asyncio.sleep(0.5)
     return {"user_id": user_id, "name": f"User {user_id}", "email": f"{user_id}@example.com"}
 
-@Senpuki.durable()
+@Stent.durable()
 async def send_notification(user: dict, message: str) -> bool:
     """Send a notification to a user."""
     await asyncio.sleep(0.3)
     print(f"Sent to {user['email']}: {message}")
     return True
 
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def generate_report(data: list[dict]) -> str:
     """Generate a report from data. Results are cached."""
     await asyncio.sleep(1.0)  # Expensive operation
@@ -127,9 +127,9 @@ async def generate_report(data: list[dict]) -> str:
 The orchestrator coordinates the activities:
 
 ```python
-from senpuki import Result
+from stent import Result
 
-@Senpuki.durable()
+@Stent.durable()
 async def notification_workflow(user_ids: list[str], message: str) -> Result[dict, Exception]:
     """
     Workflow that fetches user data and sends notifications.
@@ -170,9 +170,9 @@ async def main():
         os.remove(db_path)
     
     # Initialize
-    backend = Senpuki.backends.SQLiteBackend(db_path)
+    backend = Stent.backends.SQLiteBackend(db_path)
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Start worker with configuration
     worker = asyncio.create_task(
@@ -187,7 +187,7 @@ async def main():
     exec_id = await executor.dispatch(
         notification_workflow,
         ["user-1", "user-2", "user-3"],
-        "Welcome to Senpuki!"
+        "Welcome to Stent!"
     )
     
     # Monitor progress
@@ -244,19 +244,19 @@ If the worker crashes at any point:
 For production, use PostgreSQL instead of SQLite:
 
 ```python
-backend = Senpuki.backends.PostgresBackend(
-    "postgresql://user:password@localhost:5432/senpuki"
+backend = Stent.backends.PostgresBackend(
+    "postgresql://user:password@localhost:5432/stent"
 )
 await backend.init_db()
-executor = Senpuki(backend=backend)
+executor = Stent(backend=backend)
 ```
 
 ### Adding Redis for Low-Latency Notifications
 
 ```python
-executor = Senpuki(
+executor = Stent(
     backend=backend,
-    notification_backend=Senpuki.notifications.RedisBackend("redis://localhost:6379")
+    notification_backend=Stent.notifications.RedisBackend("redis://localhost:6379")
 )
 ```
 
@@ -285,12 +285,12 @@ exec_id = await executor.dispatch(
 ### Using Durable Sleep
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow_with_wait():
     await do_first_step()
     
     # Durable sleep - worker is free during this time
-    await Senpuki.sleep("1h")
+    await Stent.sleep("1h")
     
     await do_second_step()
 ```

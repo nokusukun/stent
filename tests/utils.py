@@ -1,10 +1,10 @@
 import asyncio
 import os
 import pytest
-from senpuki import Senpuki
+from stent import Stent
 
 def get_test_backend(test_id: str):
-    backend_type = os.environ.get("SENPUKI_TEST_BACKEND", "sqlite")
+    backend_type = os.environ.get("STENT_TEST_BACKEND", "sqlite")
     
     if backend_type == "postgres":
         # Assumes a running postgres instance, e.g. via docker
@@ -13,12 +13,12 @@ def get_test_backend(test_id: str):
         # For simplicity, let's assume a single test db and we clear tables or use unique prefixes if needed.
         # BUT, standard practice for concurrent tests is separate DBs or schemas.
         # Here we will rely on the caller to cleanup or we can use a single DB and init_db ensures tables exist.
-        dsn = os.environ.get("SENPUKI_TEST_PG_DSN", "postgres://postgres:postgres@localhost:5432/senpuki_test")
-        backend = Senpuki.backends.PostgresBackend(dsn)
+        dsn = os.environ.get("STENT_TEST_PG_DSN", "postgres://postgres:postgres@localhost:5432/stent_test")
+        backend = Stent.backends.PostgresBackend(dsn)
         return backend
     else:
-        db_path = f"test_senpuki_{test_id}.sqlite"
-        return Senpuki.backends.SQLiteBackend(db_path)
+        db_path = f"test_stent_{test_id}.sqlite"
+        return Stent.backends.SQLiteBackend(db_path)
 
 async def clear_test_backend(backend):
     """Clears tables but keeps connection open if possible"""

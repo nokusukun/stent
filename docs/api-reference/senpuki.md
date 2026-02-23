@@ -1,13 +1,13 @@
-# Senpuki API Reference
+# Stent API Reference
 
-The `Senpuki` class is the main entry point for the library. It provides methods for dispatching workflows, running workers, and managing executions.
+The `Stent` class is the main entry point for the library. It provides methods for dispatching workflows, running workers, and managing executions.
 
 ## Constructor
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
-executor = Senpuki(
+executor = Stent(
     backend: Backend,
     serializer: Serializer | Literal["json", "pickle"] = "json",
     notification_backend: NotificationBackend | None = None,
@@ -35,18 +35,18 @@ executor = Senpuki(
 ### Example
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
 # Minimal setup
-backend = Senpuki.backends.SQLiteBackend("workflow.db")
+backend = Stent.backends.SQLiteBackend("workflow.db")
 await backend.init_db()
-executor = Senpuki(backend=backend)
+executor = Stent(backend=backend)
 
 # Full production setup
-executor = Senpuki(
-    backend=Senpuki.backends.PostgresBackend("postgresql://user:pass@localhost/senpuki"),
+executor = Stent(
+    backend=Stent.backends.PostgresBackend("postgresql://user:pass@localhost/stent"),
     serializer="pickle",
-    notification_backend=Senpuki.notifications.RedisBackend("redis://localhost:6379"),
+    notification_backend=Stent.notifications.RedisBackend("redis://localhost:6379"),
     poll_min_interval=0.25,
     poll_max_interval=3.0,
     poll_backoff_factor=1.5,
@@ -57,33 +57,33 @@ executor = Senpuki(
 
 ## Class Attributes
 
-### `Senpuki.backends`
+### `Stent.backends`
 
 Factory for creating storage backends.
 
 ```python
 # SQLite backend
-backend = Senpuki.backends.SQLiteBackend("path/to/db.sqlite")
+backend = Stent.backends.SQLiteBackend("path/to/db.sqlite")
 
 # PostgreSQL backend
-backend = Senpuki.backends.PostgresBackend("postgresql://user:pass@host:5432/db")
+backend = Stent.backends.PostgresBackend("postgresql://user:pass@host:5432/db")
 ```
 
-### `Senpuki.notifications`
+### `Stent.notifications`
 
 Factory for creating notification backends.
 
 ```python
 # Redis notification backend
-notifications = Senpuki.notifications.RedisBackend("redis://localhost:6379")
+notifications = Stent.notifications.RedisBackend("redis://localhost:6379")
 ```
 
-### `Senpuki.default_registry`
+### `Stent.default_registry`
 
-The global function registry. All `@Senpuki.durable()` decorated functions are registered here by default.
+The global function registry. All `@Stent.durable()` decorated functions are registered here by default.
 
 ```python
-from senpuki import registry
+from stent import registry
 
 # Access registered functions
 meta = registry.get("module:function_name")
@@ -93,12 +93,12 @@ meta = registry.get("module:function_name")
 
 ## Decorator
 
-### `@Senpuki.durable()`
+### `@Stent.durable()`
 
 Decorator to register a function as durable.
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     cached: bool = False,
     retry_policy: RetryPolicy | None = None,
     tags: List[str] | None = None,
@@ -129,12 +129,12 @@ Decorator to register a function as durable.
 
 ```python
 # Basic activity
-@Senpuki.durable()
+@Stent.durable()
 async def process_item(item_id: str) -> dict:
     return {"id": item_id, "processed": True}
 
 # Activity with retries
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=5,
         initial_delay=1.0,
@@ -148,25 +148,25 @@ async def call_external_api(url: str) -> dict:
     return response.json()
 
 # Cached expensive computation
-@Senpuki.durable(cached=True, version="v1")
+@Stent.durable(cached=True, version="v1")
 async def heavy_computation(data_hash: str) -> bytes:
     # Result is cached - subsequent calls return immediately
     return await compute_expensive_result(data_hash)
 
 # Idempotent operation
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def charge_customer(customer_id: str, amount: int) -> str:
     # Only executes once per unique arguments
     return await payment_gateway.charge(customer_id, amount)
 
 # Rate-limited function
-@Senpuki.durable(max_concurrent=5)
+@Stent.durable(max_concurrent=5)
 async def external_api_call(data: dict) -> dict:
     # Max 5 concurrent calls across all workers
     return await api.call(data)
 
 # Custom idempotency key
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,
     idempotency_key_func=lambda order_id, **_: f"process_order:{order_id}"
 )
@@ -570,7 +570,7 @@ async def discard_dead_letter(self, task_id: str) -> bool:
 
 ## Static Methods
 
-### `Senpuki.context()`
+### `Stent.context()`
 
 Access execution-scoped counters and custom state from inside a durable function.
 
@@ -589,16 +589,16 @@ Notes:
 - `counters`/`state` initialize defaults if values are not present yet.
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow():
-    ctx = Senpuki.context(counters={"progress": 0}, state={"phase": "start"})
+    ctx = Stent.context(counters={"progress": 0}, state={"phase": "start"})
     ctx.counters("progress").add(1)
     ctx.state("phase").set("running")
 ```
 
 ---
 
-### `Senpuki.sleep()`
+### `Stent.sleep()`
 
 Durable sleep that doesn't block the worker.
 
@@ -610,19 +610,19 @@ async def sleep(duration: str | dict | timedelta) -> None:
 #### Example
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow_with_wait():
     await do_first_step()
     
     # Worker is free during this sleep
-    await Senpuki.sleep("1h")
+    await Stent.sleep("1h")
     
     await do_second_step()
 ```
 
 ---
 
-### `Senpuki.map()`
+### `Stent.map()`
 
 Batch schedule a function for each item in an iterable.
 
@@ -640,16 +640,16 @@ More efficient than `asyncio.gather` for large batches as it batches database op
 #### Example
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def batch_workflow(item_ids: list[str]):
     # Efficiently schedules process_item for each ID
-    results = await Senpuki.map(process_item, item_ids)
+    results = await Stent.map(process_item, item_ids)
     return results
 ```
 
 ---
 
-### `Senpuki.gather()`
+### `Stent.gather()`
 
 Alias for `asyncio.gather` with support for `return_exceptions`.
 
@@ -660,7 +660,7 @@ async def gather(cls, *tasks, **kwargs) -> List[Any]:
 
 ---
 
-### `Senpuki.wait_for_signal()`
+### `Stent.wait_for_signal()`
 
 Wait for an external signal within a workflow.
 
@@ -672,12 +672,12 @@ async def wait_for_signal(name: str) -> Any:
 #### Example
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def approval_workflow(request_id: str):
     await send_approval_request(request_id)
     
     # Block until signal is received
-    approval = await Senpuki.wait_for_signal("approval")
+    approval = await Stent.wait_for_signal("approval")
     
     if approval["approved"]:
         await process_approved_request(request_id)
@@ -729,7 +729,7 @@ await lifecycle.wait_until_stopped()
 
 ### `UnregisteredFunctionError`
 
-Raised when attempting to dispatch a function that hasn't been decorated with `@Senpuki.durable()`.
+Raised when attempting to dispatch a function that hasn't been decorated with `@Stent.durable()`.
 
 ```python
 class UnregisteredFunctionError(RuntimeError):

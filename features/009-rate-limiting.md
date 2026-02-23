@@ -4,30 +4,30 @@
 This feature enables limiting the maximum number of concurrent executions for specific durable functions across the entire cluster. This is useful for managing resource-intensive tasks (e.g., GPU jobs) or rate-limiting external API calls (e.g., "max 5 concurrent requests").
 
 ## Key Changes
-*   **`senpuki/registry.py`**: Updated `FunctionMetadata` to include `max_concurrent`.
-*   **`senpuki/executor.py`**:
-    *   Updated `@Senpuki.durable` decorator to accept `max_concurrent` argument.
-    *   Updated `Senpuki.serve` to collect concurrency limits and pass them to the backend.
-*   **`senpuki/backend/base.py`**: Updated `claim_next_task` protocol to accept `concurrency_limits`.
-*   **`senpuki/backend/sqlite.py` & `senpuki/backend/postgres.py`**: Implemented `claim_next_task` logic to enforce concurrency limits by checking active task counts before claiming.
+*   **`stent/registry.py`**: Updated `FunctionMetadata` to include `max_concurrent`.
+*   **`stent/executor.py`**:
+    *   Updated `@Stent.durable` decorator to accept `max_concurrent` argument.
+    *   Updated `Stent.serve` to collect concurrency limits and pass them to the backend.
+*   **`stent/backend/base.py`**: Updated `claim_next_task` protocol to accept `concurrency_limits`.
+*   **`stent/backend/sqlite.py` & `stent/backend/postgres.py`**: Implemented `claim_next_task` logic to enforce concurrency limits by checking active task counts before claiming.
 
 ## Usage/Configuration
-You can apply a concurrency limit using the `max_concurrent` parameter in the `@Senpuki.durable` decorator.
+You can apply a concurrency limit using the `max_concurrent` parameter in the `@Stent.durable` decorator.
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
 # Limit to 1 concurrent execution globally
-@Senpuki.durable(max_concurrent=1)
+@Stent.durable(max_concurrent=1)
 async def exclusive_task(x: int):
     # ... expensive operation ...
     pass
 
 # Limit to 5 concurrent executions
-@Senpuki.durable(max_concurrent=5)
+@Stent.durable(max_concurrent=5)
 async def rate_limited_api_call(url: str):
     # ... call external API ...
     pass
 ```
 
-The worker (`Senpuki.serve`) automatically respects these limits when claiming tasks.
+The worker (`Stent.serve`) automatically respects these limits when claiming tasks.

@@ -1,19 +1,19 @@
 import asyncio
 import pytest
 import os
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 
 from datetime import timedelta
 
-@Senpuki.durable()
+@Stent.durable()
 async def signal_workflow():
-    val = await Senpuki.wait_for_signal("my_signal")
+    val = await Stent.wait_for_signal("my_signal")
     return val
 
-@Senpuki.durable()
+@Stent.durable()
 async def multi_signal_workflow():
-    s1 = await Senpuki.wait_for_signal("sig1")
-    s2 = await Senpuki.wait_for_signal("sig2")
+    s1 = await Stent.wait_for_signal("sig1")
+    s2 = await Stent.wait_for_signal("sig2")
     return s1 + s2
 
 @pytest.mark.asyncio
@@ -22,9 +22,9 @@ async def test_signal_basic():
     if os.path.exists(db_path):
         os.remove(db_path)
         
-    backend = Senpuki.backends.SQLiteBackend(db_path)
+    backend = Stent.backends.SQLiteBackend(db_path)
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Start worker
     worker_task = asyncio.create_task(executor.serve(poll_interval=0.1))
@@ -70,9 +70,9 @@ async def test_signal_buffered():
     if os.path.exists(db_path):
         os.remove(db_path)
         
-    backend = Senpuki.backends.SQLiteBackend(db_path)
+    backend = Stent.backends.SQLiteBackend(db_path)
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     worker_task = asyncio.create_task(executor.serve(poll_interval=0.1))
     
     try:
@@ -102,9 +102,9 @@ async def test_multi_signals():
     if os.path.exists(db_path):
         os.remove(db_path)
         
-    backend = Senpuki.backends.SQLiteBackend(db_path)
+    backend = Stent.backends.SQLiteBackend(db_path)
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     worker_task = asyncio.create_task(executor.serve(poll_interval=0.1))
     
     try:

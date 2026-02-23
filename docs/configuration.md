@@ -1,13 +1,13 @@
 # Configuration Reference
 
-This document provides a complete reference for all Senpuki configuration options.
+This document provides a complete reference for all Stent configuration options.
 
-## Senpuki Constructor
+## Stent Constructor
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
-executor = Senpuki(
+executor = Stent(
     backend=backend,
     serializer="json",
     notification_backend=None,
@@ -30,10 +30,10 @@ executor = Senpuki(
 | `function_registry` | `FunctionRegistry \| None` | `None` | Custom function registry (uses global default if None) |
 | `metrics` | `MetricsRecorder \| None` | `None` | Metrics recorder for monitoring |
 
-## @Senpuki.durable() Decorator
+## @Stent.durable() Decorator
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     cached=False,
     retry_policy=None,
     tags=None,
@@ -63,7 +63,7 @@ async def my_function():
 ## RetryPolicy
 
 ```python
-from senpuki import RetryPolicy
+from stent import RetryPolicy
 
 policy = RetryPolicy(
     max_attempts=3,
@@ -175,7 +175,7 @@ await executor.serve(
 ### SQLiteBackend
 
 ```python
-backend = Senpuki.backends.SQLiteBackend(path)
+backend = Stent.backends.SQLiteBackend(path)
 await backend.init_db()
 ```
 
@@ -189,7 +189,7 @@ Special paths:
 ### PostgresBackend
 
 ```python
-backend = Senpuki.backends.PostgresBackend(dsn)
+backend = Stent.backends.PostgresBackend(dsn)
 await backend.init_db()
 ```
 
@@ -207,7 +207,7 @@ postgresql://user:password@host:port/database?sslmode=require
 ### RedisBackend
 
 ```python
-notification_backend = Senpuki.notifications.RedisBackend(url)
+notification_backend = Stent.notifications.RedisBackend(url)
 ```
 
 | Parameter | Type | Description |
@@ -227,16 +227,16 @@ rediss://host:6379  # SSL
 
 ```python
 # JSON (default) - safe, portable
-executor = Senpuki(backend=backend, serializer="json")
+executor = Stent(backend=backend, serializer="json")
 
 # Pickle - supports more Python types
-executor = Senpuki(backend=backend, serializer="pickle")
+executor = Stent(backend=backend, serializer="pickle")
 ```
 
 ### Custom Serializer
 
 ```python
-from senpuki.utils.serialization import Serializer
+from stent.utils.serialization import Serializer
 
 class CustomSerializer(Serializer):
     def dumps(self, obj: Any) -> bytes:
@@ -247,7 +247,7 @@ class CustomSerializer(Serializer):
         # Deserialize bytes to object
         ...
 
-executor = Senpuki(backend=backend, serializer=CustomSerializer())
+executor = Stent(backend=backend, serializer=CustomSerializer())
 ```
 
 ## Metrics
@@ -255,7 +255,7 @@ executor = Senpuki(backend=backend, serializer=CustomSerializer())
 ### MetricsRecorder Protocol
 
 ```python
-from senpuki.metrics import MetricsRecorder
+from stent.metrics import MetricsRecorder
 
 class CustomMetrics(MetricsRecorder):
     def task_claimed(self, queue: str | None, step_name: str, kind: str) -> None:
@@ -284,18 +284,18 @@ class CustomMetrics(MetricsRecorder):
         """Called when a lease renewal is attempted."""
         ...
 
-executor = Senpuki(backend=backend, metrics=CustomMetrics())
+executor = Stent(backend=backend, metrics=CustomMetrics())
 ```
 
 ## Environment Variables
 
-Senpuki doesn't read environment variables directly, but here's a common pattern:
+Stent doesn't read environment variables directly, but here's a common pattern:
 
 ```python
 import os
 
 # Database
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///senpuki.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///stent.db")
 REDIS_URL = os.environ.get("REDIS_URL")
 
 # Worker settings
@@ -305,15 +305,15 @@ POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "1.0"))
 
 # Setup
 if DATABASE_URL.startswith("postgresql"):
-    backend = Senpuki.backends.PostgresBackend(DATABASE_URL)
+    backend = Stent.backends.PostgresBackend(DATABASE_URL)
 else:
-    backend = Senpuki.backends.SQLiteBackend(DATABASE_URL.replace("sqlite:///", ""))
+    backend = Stent.backends.SQLiteBackend(DATABASE_URL.replace("sqlite:///", ""))
 
 notification_backend = None
 if REDIS_URL:
-    notification_backend = Senpuki.notifications.RedisBackend(REDIS_URL)
+    notification_backend = Stent.notifications.RedisBackend(REDIS_URL)
 
-executor = Senpuki(
+executor = Stent(
     backend=backend,
     notification_backend=notification_backend,
 )
@@ -327,42 +327,42 @@ await executor.serve(
 
 ## CLI Configuration
 
-The `senpuki` CLI uses environment variables or command-line arguments:
+The `stent` CLI uses environment variables or command-line arguments:
 
 ```bash
 # Using environment variables
-export SENPUKI_DATABASE_URL="postgresql://localhost/senpuki"
-senpuki executions list
+export STENT_DATABASE_URL="postgresql://localhost/stent"
+stent executions list
 
 # Using command-line arguments
-senpuki --database "sqlite:///senpuki.db" executions list
+stent --database "sqlite:///stent.db" executions list
 ```
 
 ### CLI Commands
 
 ```bash
 # List executions
-senpuki executions list [--state STATE] [--limit N]
+stent executions list [--state STATE] [--limit N]
 
 # Show execution details
-senpuki executions show <execution_id>
+stent executions show <execution_id>
 
 # List tasks for an execution
-senpuki tasks list <execution_id>
+stent tasks list <execution_id>
 
 # Dead Letter Queue
-senpuki dlq list [--limit N]
-senpuki dlq show <task_id>
-senpuki dlq replay <task_id> [--queue QUEUE]
-senpuki dlq discard <task_id>
+stent dlq list [--limit N]
+stent dlq show <task_id>
+stent dlq replay <task_id> [--queue QUEUE]
+stent dlq discard <task_id>
 ```
 
 ## Full Configuration Example
 
 ```python
 from datetime import timedelta
-from senpuki import Senpuki, RetryPolicy
-from senpuki.metrics import MetricsRecorder
+from stent import Stent, RetryPolicy
+from stent.metrics import MetricsRecorder
 
 # Custom metrics
 class PrometheusMetrics(MetricsRecorder):
@@ -372,13 +372,13 @@ class PrometheusMetrics(MetricsRecorder):
 # Initialize
 async def create_executor():
     # Backend
-    backend = Senpuki.backends.PostgresBackend(
-        "postgresql://user:pass@localhost:5432/senpuki"
+    backend = Stent.backends.PostgresBackend(
+        "postgresql://user:pass@localhost:5432/stent"
     )
     await backend.init_db()
     
     # Notifications
-    notification_backend = Senpuki.notifications.RedisBackend(
+    notification_backend = Stent.notifications.RedisBackend(
         "redis://localhost:6379"
     )
     
@@ -386,7 +386,7 @@ async def create_executor():
     metrics = PrometheusMetrics()
     
     # Create executor
-    executor = Senpuki(
+    executor = Stent(
         backend=backend,
         serializer="json",
         notification_backend=notification_backend,
@@ -399,7 +399,7 @@ async def create_executor():
     return executor
 
 # Define functions with full configuration
-@Senpuki.durable(
+@Stent.durable(
     cached=True,
     retry_policy=RetryPolicy(
         max_attempts=5,
@@ -420,7 +420,7 @@ async def api_call(endpoint: str, data: dict) -> dict:
     ...
 
 # Start worker with full configuration
-async def start_worker(executor: Senpuki):
+async def start_worker(executor: Stent):
     lifecycle = executor.create_worker_lifecycle(name="worker-1")
     
     await executor.serve(
@@ -439,7 +439,7 @@ async def start_worker(executor: Senpuki):
     )
 
 # Dispatch with full options
-async def dispatch_workflow(executor: Senpuki):
+async def dispatch_workflow(executor: Stent):
     exec_id = await executor.dispatch(
         my_workflow,
         arg1, arg2,
@@ -457,4 +457,4 @@ async def dispatch_workflow(executor: Senpuki):
 
 - [Getting Started](getting-started.md) - Quick start guide
 - [Deployment](deployment.md) - Production deployment
-- [API Reference](api-reference/senpuki.md) - Full API documentation
+- [API Reference](api-reference/stent.md) - Full API documentation

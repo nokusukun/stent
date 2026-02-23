@@ -4,21 +4,21 @@ import os
 import logging
 from datetime import datetime, timedelta
 from typing import Any, cast
-from senpuki import Senpuki, Result
-from senpuki.core import TaskRecord, RetryPolicy, ExecutionRecord
-import senpuki.executor as executor_module
-from senpuki.executor import ExpiryError
+from stent import Stent, Result
+from stent.core import TaskRecord, RetryPolicy, ExecutionRecord
+import stent.executor as executor_module
+from stent.executor import ExpiryError, _original_sleep
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 logger = logging.getLogger(__name__)
 
-@Senpuki.durable()
+@Stent.durable()
 async def quick_task():
     return "quick"
 
-@Senpuki.durable()
+@Stent.durable()
 async def slow_task(duration: float):
-    await asyncio.sleep(duration)
+    await _original_sleep(duration)  # real sleep to simulate slow work
     return "slow"
 
 class TestWaitFor(unittest.IsolatedAsyncioTestCase):
@@ -26,7 +26,7 @@ class TestWaitFor(unittest.IsolatedAsyncioTestCase):
         self.backend = get_test_backend(f"waitfor_{os.getpid()}")
         await self.backend.init_db()
         await clear_test_backend(self.backend)
-        self.executor = Senpuki(backend=self.backend)
+        self.executor = Stent(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.1))
 
     async def asyncTearDown(self):
@@ -49,9 +49,9 @@ class TestWaitFor(unittest.IsolatedAsyncioTestCase):
 
     async def test_wait_for_timeout(self):
         # We need a longer task than the wait expiry
-        @Senpuki.durable()
+        @Stent.durable()
         async def slow_task_impl():
-            await asyncio.sleep(5.0) # Longer sleep to be safe
+            await _original_sleep(5.0)  # real sleep to simulate slow work
             return "slow"
             
         exec_id = await self.executor.dispatch(slow_task_impl)
@@ -107,7 +107,7 @@ class _PollingDummyBackend:
 class TestAdaptivePolling(unittest.IsolatedAsyncioTestCase):
     async def test_waiter_backoff_without_notifications(self):
         backend = _PollingDummyBackend()
-        executor = Senpuki(
+        executor = Stent(
             backend=cast(Any, backend),
             poll_min_interval=0.01,
             poll_max_interval=0.04,
@@ -225,7 +225,7 @@ class _CancelledExecutionBackend:
 
 class TestNotificationTimeoutAndCancelled(unittest.IsolatedAsyncioTestCase):
     async def test_wait_for_task_timeout_with_notifications_raises_expiry(self):
-        executor = Senpuki(
+        executor = Stent(
             backend=cast(Any, _AlwaysPendingBackend()),
             notification_backend=cast(Any, _NotificationTimeoutBackend()),
         )
@@ -234,7 +234,7 @@ class TestNotificationTimeoutAndCancelled(unittest.IsolatedAsyncioTestCase):
             await executor._wait_for_task_internal("task-timeout", expiry=0.05)
 
     async def test_wait_for_timeout_with_notifications_raises_expiry(self):
-        executor = Senpuki(
+        executor = Stent(
             backend=cast(Any, _AlwaysPendingBackend()),
             notification_backend=cast(Any, _NotificationTimeoutBackend()),
         )
@@ -243,7 +243,7 @@ class TestNotificationTimeoutAndCancelled(unittest.IsolatedAsyncioTestCase):
             await executor.wait_for("exec-timeout", expiry=0.05)
 
     async def test_cancelled_result_of_and_wait_for_are_consistent(self):
-        executor = Senpuki(backend=cast(Any, _CancelledExecutionBackend()))
+        executor = Stent(backend=cast(Any, _CancelledExecutionBackend()))
 
         result_direct = await executor.result_of("exec-cancelled")
         result_wait = await executor.wait_for("exec-cancelled", expiry=1.0)

@@ -2,22 +2,22 @@ import asyncio
 import os
 import unittest
 
-from senpuki import Senpuki
+from stent import Stent
 from tests.utils import get_test_backend, cleanup_test_backend, clear_test_backend
 
 
-@Senpuki.durable()
+@Stent.durable()
 async def context_bar():
-    ctx = Senpuki.context()
+    ctx = Stent.context()
     ctx.counters("progress").add(1)
     ctx.counters("abc").add(40)
     ctx.state("phase").set("bar_done")
     await asyncio.sleep(0)
 
 
-@Senpuki.durable()
+@Stent.durable()
 async def context_foo():
-    ctx = Senpuki.context(
+    ctx = Stent.context(
         counters={
             "progress": 0,
             "volume": 30,
@@ -36,7 +36,7 @@ class TestExecutionContext(unittest.IsolatedAsyncioTestCase):
         self.backend = get_test_backend(f"ctx_{os.getpid()}_{id(self)}")
         await self.backend.init_db()
         await clear_test_backend(self.backend)
-        self.executor = Senpuki(backend=self.backend)
+        self.executor = Stent(backend=self.backend)
         self.worker_task = asyncio.create_task(self.executor.serve(poll_interval=0.05))
 
     async def asyncTearDown(self):

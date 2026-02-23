@@ -1,15 +1,15 @@
 # Defining Durable Functions
 
-This guide covers everything you need to know about defining durable functions with the `@Senpuki.durable()` decorator.
+This guide covers everything you need to know about defining durable functions with the `@Stent.durable()` decorator.
 
 ## Basic Definition
 
-Every function you want Senpuki to manage must be decorated with `@Senpuki.durable()`:
+Every function you want Stent to manage must be decorated with `@Stent.durable()`:
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
-@Senpuki.durable()
+@Stent.durable()
 async def my_function(arg1: str, arg2: int) -> str:
     # Your async code here
     return f"{arg1}: {arg2}"
@@ -28,7 +28,7 @@ async def my_function(arg1: str, arg2: int) -> str:
 Cache results for reuse across different executions.
 
 ```python
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def expensive_computation(data_hash: str) -> bytes:
     # First call computes the result
     # Subsequent calls with same arguments return cached result
@@ -51,9 +51,9 @@ async def expensive_computation(data_hash: str) -> bytes:
 Configure automatic retries on failure.
 
 ```python
-from senpuki import Senpuki, RetryPolicy
+from stent import Stent, RetryPolicy
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=5,
         initial_delay=1.0,
@@ -75,7 +75,7 @@ See [RetryPolicy API Reference](../api-reference/retry-policy.md) for full detai
 Add tags for worker filtering.
 
 ```python
-@Senpuki.durable(tags=["billing", "high-priority"])
+@Stent.durable(tags=["billing", "high-priority"])
 async def charge_customer(customer_id: str, amount: int) -> str:
     ...
 
@@ -93,15 +93,15 @@ await executor.serve(tags=["billing"])
 Set task priority (higher values = processed first).
 
 ```python
-@Senpuki.durable(priority=10)
+@Stent.durable(priority=10)
 async def urgent_task():
     ...
 
-@Senpuki.durable(priority=0)  # Default
+@Stent.durable(priority=0)  # Default
 async def normal_task():
     ...
 
-@Senpuki.durable(priority=-10)
+@Stent.durable(priority=-10)
 async def background_task():
     ...
 ```
@@ -113,11 +113,11 @@ Workers process tasks in priority order when multiple tasks are available.
 Assign function to a specific queue.
 
 ```python
-@Senpuki.durable(queue="critical")
+@Stent.durable(queue="critical")
 async def critical_operation():
     ...
 
-@Senpuki.durable(queue="background")
+@Stent.durable(queue="background")
 async def background_job():
     ...
 
@@ -132,7 +132,7 @@ await executor.serve()  # All queues
 Enable idempotency to prevent duplicate execution.
 
 ```python
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def send_welcome_email(user_id: str) -> bool:
     # Only executes once per unique user_id
     await email_service.send(user_id, "Welcome!")
@@ -149,7 +149,7 @@ async def send_welcome_email(user_id: str) -> bool:
 Provide a custom function to generate idempotency keys.
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,
     idempotency_key_func=lambda order_id, **_: f"process:{order_id}"
 )
@@ -169,7 +169,7 @@ async def process_order(order_id: str, timestamp: str, retries: int) -> dict:
 Version string for cache/idempotency keys.
 
 ```python
-@Senpuki.durable(cached=True, version="v2")
+@Stent.durable(cached=True, version="v2")
 async def process_data(data: dict) -> dict:
     # Changing version invalidates previous cache entries
     ...
@@ -185,7 +185,7 @@ async def process_data(data: dict) -> dict:
 Limit concurrent executions across the entire cluster.
 
 ```python
-@Senpuki.durable(max_concurrent=5)
+@Stent.durable(max_concurrent=5)
 async def call_rate_limited_api(data: dict) -> dict:
     # Only 5 concurrent calls across all workers
     return await api.call(data)
@@ -205,12 +205,12 @@ async def call_rate_limited_api(data: dict) -> dict:
 
 ### Automatic Registration
 
-Functions decorated with `@Senpuki.durable()` are automatically registered in the global registry:
+Functions decorated with `@Stent.durable()` are automatically registered in the global registry:
 
 ```python
-from senpuki import Senpuki, registry
+from stent import Stent, registry
 
-@Senpuki.durable()
+@Stent.durable()
 async def my_function():
     ...
 
@@ -221,11 +221,11 @@ print(meta.name)  # "__main__:my_function"
 
 ### Function Names
 
-Senpuki generates function names from the module and qualified name:
+Stent generates function names from the module and qualified name:
 
 ```python
 # In myapp/tasks.py
-@Senpuki.durable()
+@Stent.durable()
 async def process_item():
     ...
 
@@ -233,7 +233,7 @@ async def process_item():
 
 # For nested classes
 class MyClass:
-    @Senpuki.durable()
+    @Stent.durable()
     async def method(self):
         ...
 
@@ -245,13 +245,13 @@ class MyClass:
 Use a custom registry for isolation:
 
 ```python
-from senpuki.registry import FunctionRegistry
+from stent.registry import FunctionRegistry
 
 # Create isolated registry
 custom_registry = FunctionRegistry()
 
 # Register functions manually
-from senpuki.registry import FunctionMetadata
+from stent.registry import FunctionMetadata
 
 meta = FunctionMetadata(
     name="custom:my_function",
@@ -269,7 +269,7 @@ meta = FunctionMetadata(
 custom_registry.register(meta)
 
 # Use with executor
-executor = Senpuki(backend=backend, function_registry=custom_registry)
+executor = Stent(backend=backend, function_registry=custom_registry)
 ```
 
 **Use cases:**
@@ -289,7 +289,7 @@ The default JSON serializer supports:
 - `Exception` (serialized as message + class name)
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def json_compatible(
     name: str,
     count: int,
@@ -304,9 +304,9 @@ async def json_compatible(
 For complex Python objects, use pickle:
 
 ```python
-executor = Senpuki(backend=backend, serializer="pickle")
+executor = Stent(backend=backend, serializer="pickle")
 
-@Senpuki.durable()
+@Stent.durable()
 async def with_complex_args(
     df: pandas.DataFrame,
     model: sklearn.Model,
@@ -337,7 +337,7 @@ class MySerializer:
         # Deserialize bytes to object
         ...
 
-executor = Senpuki(backend=backend, serializer=MySerializer())
+executor = Stent(backend=backend, serializer=MySerializer())
 ```
 
 ## Best Practices
@@ -346,16 +346,16 @@ executor = Senpuki(backend=backend, serializer=MySerializer())
 
 ```python
 # Good: Single responsibility
-@Senpuki.durable()
+@Stent.durable()
 async def fetch_user(user_id: str) -> dict:
     return await db.get_user(user_id)
 
-@Senpuki.durable()
+@Stent.durable()
 async def send_email(email: str, subject: str, body: str) -> bool:
     return await email_client.send(email, subject, body)
 
 # Bad: Too many responsibilities
-@Senpuki.durable()
+@Stent.durable()
 async def fetch_user_and_send_email_and_update_stats(...):
     ...
 ```
@@ -364,7 +364,7 @@ async def fetch_user_and_send_email_and_update_stats(...):
 
 ```python
 # Network operations: More retries, short delays
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=5,
         initial_delay=0.5,
@@ -375,7 +375,7 @@ async def api_call():
     ...
 
 # Database operations: Fewer retries
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=3,
         initial_delay=1.0,
@@ -386,7 +386,7 @@ async def db_operation():
     ...
 
 # Validation: No retries
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(max_attempts=1)
 )
 async def validate_input(data: dict):
@@ -397,12 +397,12 @@ async def validate_input(data: dict):
 
 ```python
 # Bad: Not idempotent
-@Senpuki.durable()
+@Stent.durable()
 async def increment_counter(counter_id: str):
     await db.execute("UPDATE counters SET value = value + 1 WHERE id = ?", counter_id)
 
 # Good: Idempotent with explicit state
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def set_counter(counter_id: str, value: int):
     await db.execute("UPDATE counters SET value = ? WHERE id = ?", value, counter_id)
 ```
@@ -410,7 +410,7 @@ async def set_counter(counter_id: str, value: int):
 ### 4. Document Function Contracts
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(max_attempts=3),
     idempotent=True,
     tags=["billing"]
@@ -447,13 +447,13 @@ async def charge_customer(
 # When changing function behavior, consider:
 
 # Option 1: New version (invalidates cache)
-@Senpuki.durable(cached=True, version="v2")  # Was "v1"
+@Stent.durable(cached=True, version="v2")  # Was "v1"
 async def process_data(data: dict) -> dict:
     # New processing logic
     ...
 
 # Option 2: New function (for significant changes)
-@Senpuki.durable(cached=True)
+@Stent.durable(cached=True)
 async def process_data_v2(data: dict) -> dict:
     # Completely new approach
     ...

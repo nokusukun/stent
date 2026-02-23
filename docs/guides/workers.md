@@ -1,6 +1,6 @@
 # Worker Configuration
 
-This guide covers how to configure and deploy Senpuki workers for optimal performance and reliability.
+This guide covers how to configure and deploy Stent workers for optimal performance and reliability.
 
 ## Starting a Worker
 
@@ -8,13 +8,13 @@ Workers are started with `executor.serve()`:
 
 ```python
 import asyncio
-from senpuki import Senpuki
+from stent import Stent
 
 async def main():
-    backend = Senpuki.backends.SQLiteBackend("workflow.db")
+    backend = Stent.backends.SQLiteBackend("workflow.db")
     await backend.init_db()
     
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Start worker (runs indefinitely)
     await executor.serve()
@@ -87,17 +87,17 @@ await executor.serve(
 
 ```python
 from datetime import timedelta
-from senpuki import Senpuki, WorkerLifecycle
+from stent import Stent, WorkerLifecycle
 
 async def run_production_worker():
-    backend = Senpuki.backends.PostgresBackend(
-        "postgresql://user:pass@localhost/senpuki"
+    backend = Stent.backends.PostgresBackend(
+        "postgresql://user:pass@localhost/stent"
     )
     await backend.init_db()
     
-    executor = Senpuki(
+    executor = Stent(
         backend=backend,
-        notification_backend=Senpuki.notifications.RedisBackend(
+        notification_backend=Stent.notifications.RedisBackend(
             "redis://localhost:6379"
         ),
         poll_min_interval=0.1,
@@ -131,15 +131,15 @@ Assign tasks to specific queues and route workers:
 
 ```python
 # Function definitions
-@Senpuki.durable(queue="critical")
+@Stent.durable(queue="critical")
 async def critical_operation():
     ...
 
-@Senpuki.durable(queue="background")
+@Stent.durable(queue="background")
 async def background_job():
     ...
 
-@Senpuki.durable()  # Default queue
+@Stent.durable()  # Default queue
 async def normal_task():
     ...
 ```
@@ -173,15 +173,15 @@ Use tags for cross-cutting concerns:
 
 ```python
 # Functions with tags
-@Senpuki.durable(tags=["billing"])
+@Stent.durable(tags=["billing"])
 async def charge_customer():
     ...
 
-@Senpuki.durable(tags=["billing", "notifications"])
+@Stent.durable(tags=["billing", "notifications"])
 async def send_invoice():
     ...
 
-@Senpuki.durable(tags=["notifications"])
+@Stent.durable(tags=["notifications"])
 async def send_alert():
     ...
 ```
@@ -208,7 +208,7 @@ Use `WorkerLifecycle` for graceful startup/shutdown:
 
 ```python
 async def managed_worker():
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Create lifecycle handle
     lifecycle = executor.create_worker_lifecycle(name="worker-1")
@@ -261,7 +261,7 @@ async def health_check():
 
 ```python
 async def kubernetes_worker():
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     lifecycle = executor.create_worker_lifecycle(name=os.environ["HOSTNAME"])
     
     # Start worker
@@ -355,7 +355,7 @@ await executor.serve(max_concurrency=2)  # Prevent OOM
 Use `max_concurrent` for per-function limits:
 
 ```python
-@Senpuki.durable(max_concurrent=5)
+@Stent.durable(max_concurrent=5)
 async def rate_limited_api():
     # Max 5 concurrent calls ACROSS ALL WORKERS
     ...
@@ -402,12 +402,12 @@ Configure structured logging:
 
 ```python
 import logging
-from senpuki import install_structured_logging
+from stent import install_structured_logging
 
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(senpuki_execution_id)s] %(message)s"
+    format="%(asctime)s %(levelname)s [%(stent_execution_id)s] %(message)s"
 )
 
 install_structured_logging(logging.getLogger())
@@ -438,7 +438,7 @@ class PrometheusMetrics:
         else:
             LEASE_FAILURES.inc()
 
-executor = Senpuki(backend=backend, metrics=PrometheusMetrics())
+executor = Stent(backend=backend, metrics=PrometheusMetrics())
 ```
 
 ### Queue Depth Monitoring

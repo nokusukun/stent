@@ -5,7 +5,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Awaitable
 
 if TYPE_CHECKING:
-    from senpuki.executor import Senpuki
+    from stent.executor import Stent
 
 
 class _TrackedOps:
@@ -46,7 +46,7 @@ class _StateAccessor:
 
 
 class ExecutionContext:
-    def __init__(self, executor: "Senpuki", execution_id: str) -> None:
+    def __init__(self, executor: "Stent", execution_id: str) -> None:
         self._executor = executor
         self.execution_id = execution_id
         self._tracked = _TrackedOps()
@@ -91,6 +91,6 @@ class ExecutionContext:
 
 
 current_execution_context: ContextVar[ExecutionContext | None] = ContextVar(
-    "senpuki_execution_context",
+    "stent_execution_context",
     default=None,
 )

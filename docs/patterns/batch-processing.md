@@ -1,6 +1,6 @@
 # Batch Processing
 
-This guide covers patterns for processing large datasets efficiently with Senpuki.
+This guide covers patterns for processing large datasets efficiently with Stent.
 
 ## Overview
 
@@ -15,17 +15,17 @@ Batch processing involves:
 ## Basic Batch Pattern
 
 ```python
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 import asyncio
 
-@Senpuki.durable()
+@Stent.durable()
 async def process_item(item_id: int) -> dict:
     """Process a single item."""
     # Simulate processing
     await asyncio.sleep(0.1)
     return {"id": item_id, "status": "processed"}
 
-@Senpuki.durable()
+@Stent.durable()
 async def batch_workflow(item_ids: list[int]) -> Result[dict, str]:
     """Process all items in a batch."""
     # Fan-out: Process all items in parallel
@@ -58,13 +58,13 @@ This example downloads images, processes them, and creates a gallery.
 ### Define Activities
 
 ```python
-from senpuki import Senpuki, Result
+from stent import Stent, Result
 import random
 import logging
 
 logger = logging.getLogger(__name__)
 
-@Senpuki.durable()
+@Stent.durable()
 async def download_image(image_id: int) -> str:
     """Download an image and return local path."""
     # Simulate network latency
@@ -79,7 +79,7 @@ async def download_image(image_id: int) -> str:
     logger.info(f"Downloaded image {image_id} to {path}")
     return path
 
-@Senpuki.durable()
+@Stent.durable()
 async def process_image(path: str) -> str:
     """Process an image (resize, convert, etc.)."""
     await asyncio.sleep(0.2)  # Simulate CPU work
@@ -87,7 +87,7 @@ async def process_image(path: str) -> str:
     logger.info(f"Processed {path} -> {processed_path}")
     return processed_path
 
-@Senpuki.durable()
+@Stent.durable()
 async def create_gallery(image_paths: list[str]) -> str:
     """Create a gallery from processed images."""
     await asyncio.sleep(0.5)
@@ -99,7 +99,7 @@ async def create_gallery(image_paths: list[str]) -> str:
 ### Define the Batch Orchestrator
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def image_batch_workflow(image_ids: list[int]) -> Result[str, str]:
     """
     Process a batch of images:
@@ -144,7 +144,7 @@ async def image_batch_workflow(image_ids: list[int]) -> Result[str, str]:
 For very large datasets, process in chunks to avoid memory issues and enable progress tracking:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def chunked_batch_workflow(
     item_ids: list[int],
     chunk_size: int = 100
@@ -179,7 +179,7 @@ async def chunked_batch_workflow(
         
         # Optional: Add delay between chunks to avoid overwhelming resources
         if i + chunk_size < total_items:
-            await Senpuki.sleep("100ms")
+            await Stent.sleep("100ms")
     
     return Result.Ok({
         "total": total_items,
@@ -190,18 +190,18 @@ async def chunked_batch_workflow(
     })
 ```
 
-## Using Senpuki.map for Efficiency
+## Using Stent.map for Efficiency
 
-For large batches, `Senpuki.map` provides optimized batch scheduling:
+For large batches, `Stent.map` provides optimized batch scheduling:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def efficient_batch_workflow(item_ids: list[int]) -> Result[dict, str]:
-    """Use Senpuki.map for efficient batch processing."""
+    """Use Stent.map for efficient batch processing."""
     
-    # Senpuki.map batches database operations
+    # Stent.map batches database operations
     # More efficient than asyncio.gather for large batches
-    results = await Senpuki.map(process_item, item_ids)
+    results = await Stent.map(process_item, item_ids)
     
     return Result.Ok({
         "total": len(item_ids),
@@ -214,7 +214,7 @@ async def efficient_batch_workflow(item_ids: list[int]) -> Result[dict, str]:
 | Approach | Best For | Benefits |
 |----------|----------|----------|
 | `asyncio.gather` | Small batches (< 50 items) | Simple, standard Python |
-| `Senpuki.map` | Large batches (50+ items) | Batched DB operations |
+| `Stent.map` | Large batches (50+ items) | Batched DB operations |
 | Chunked processing | Very large batches (1000+ items) | Memory control, progress |
 
 ## Rate-Limited Batch Processing
@@ -222,12 +222,12 @@ async def efficient_batch_workflow(item_ids: list[int]) -> Result[dict, str]:
 When calling external APIs with rate limits:
 
 ```python
-@Senpuki.durable(max_concurrent=5)
+@Stent.durable(max_concurrent=5)
 async def rate_limited_api_call(item_id: int) -> dict:
     """Max 5 concurrent calls to this API."""
     return await external_api.process(item_id)
 
-@Senpuki.durable()
+@Stent.durable()
 async def rate_limited_batch(item_ids: list[int]) -> Result[list, str]:
     """Process batch with rate limiting."""
     
@@ -245,7 +245,7 @@ async def rate_limited_batch(item_ids: list[int]) -> Result[list, str]:
 For more control over rate limiting:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def manually_rate_limited_batch(
     item_ids: list[int],
     batch_size: int = 10,
@@ -266,7 +266,7 @@ async def manually_rate_limited_batch(
         
         # Wait before next batch
         if i + batch_size < len(item_ids):
-            await Senpuki.sleep(delay_between_batches)
+            await Stent.sleep(delay_between_batches)
     
     return Result.Ok(all_results)
 ```
@@ -278,7 +278,7 @@ async def manually_rate_limited_batch(
 Process all items even if some fail:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def resilient_batch(item_ids: list[int]) -> Result[dict, str]:
     """Process all items, collecting failures separately."""
     tasks = [process_item(item_id) for item_id in item_ids]
@@ -315,7 +315,7 @@ async def resilient_batch(item_ids: list[int]) -> Result[dict, str]:
 ### Retry Failed Items
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def batch_with_retry(
     item_ids: list[int],
     max_retries: int = 2
@@ -332,7 +332,7 @@ async def batch_with_retry(
             
         if attempt > 0:
             logger.info(f"Retry attempt {attempt} for {len(pending)} items")
-            await Senpuki.sleep("5s")  # Wait before retry
+            await Stent.sleep("5s")  # Wait before retry
         
         tasks = [process_item(item_id) for item_id in pending]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -360,11 +360,11 @@ async def batch_with_retry(
 ### With Structured Logging
 
 ```python
-from senpuki import install_structured_logging
+from stent import install_structured_logging
 
 install_structured_logging(logging.getLogger())
 
-@Senpuki.durable()
+@Stent.durable()
 async def monitored_batch(item_ids: list[int]) -> Result[dict, str]:
     """Batch with detailed progress logging."""
     total = len(item_ids)
@@ -421,7 +421,7 @@ async def monitored_batch(item_ids: list[int]) -> Result[dict, str]:
 For very long batches, save progress to enable resume:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def resumable_batch(
     batch_id: str,
     item_ids: list[int]
@@ -485,22 +485,22 @@ async def resumable_batch(
 Process data through multiple transformation stages:
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def extract_data(source_id: str) -> dict:
     """Extract raw data from source."""
     return await data_extractor.extract(source_id)
 
-@Senpuki.durable()
+@Stent.durable()
 async def transform_data(raw_data: dict) -> dict:
     """Transform raw data."""
     return await data_transformer.transform(raw_data)
 
-@Senpuki.durable()
+@Stent.durable()
 async def load_data(transformed_data: dict) -> str:
     """Load data to destination."""
     return await data_loader.load(transformed_data)
 
-@Senpuki.durable()
+@Stent.durable()
 async def etl_pipeline(source_ids: list[str]) -> Result[dict, str]:
     """
     ETL pipeline:
@@ -603,7 +603,7 @@ await executor.serve(max_concurrency=10)
 For resumable batches:
 
 ```python
-@Senpuki.durable(idempotent=True)
+@Stent.durable(idempotent=True)
 async def idempotent_process(item_id: int) -> dict:
     """Safe to retry - won't duplicate work."""
     # Check if already processed
@@ -620,7 +620,7 @@ async def idempotent_process(item_id: int) -> dict:
 ### 6. Clean Up Resources
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def batch_with_cleanup(item_ids: list[int]) -> Result[dict, str]:
     """Clean up temporary resources after batch."""
     temp_files = []

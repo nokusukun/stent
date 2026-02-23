@@ -3,7 +3,7 @@ import json
 import pickle
 import base64
 import traceback
-from senpuki.core import Result, RetryPolicy
+from stent.core import Result, RetryPolicy
 
 
 # Registry of known exception classes for deserialization

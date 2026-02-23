@@ -1,8 +1,8 @@
 """
-Senpuki CLI - Command-line interface for managing Senpuki executions.
+Stent CLI - Command-line interface for managing Stent executions.
 
 Usage:
-    senpuki [--db PATH] <command> [options]
+    stent [--db PATH] <command> [options]
 
 Commands:
     list        List executions
@@ -15,7 +15,7 @@ Commands:
     watch       Live monitoring (requires rich)
 
 Environment:
-    SENPUKI_DB  Default database path (default: senpuki.sqlite)
+    STENT_DB  Default database path (default: stent.sqlite)
 """
 import argparse
 import asyncio
@@ -25,8 +25,8 @@ import sys
 from datetime import datetime, timedelta
 from typing import Any, cast
 
-from senpuki import Senpuki, ExecutionState
-from senpuki.core import TaskRecord, DeadLetterRecord
+from stent import Stent, ExecutionState
+from stent.core import TaskRecord, DeadLetterRecord
 
 # ANSI color codes (fallback when rich is not available)
 class Colors:
@@ -117,7 +117,7 @@ def truncate(s: str, length: int) -> str:
 # EXECUTION COMMANDS
 # ============================================================================
 
-async def list_executions(executor: Senpuki, args):
+async def list_executions(executor: Stent, args):
     """List executions with filtering."""
     state_filter = args.state.lower() if args.state else None
     executions = await executor.list_executions(limit=args.limit, state=state_filter)
@@ -143,7 +143,7 @@ async def list_executions(executor: Senpuki, args):
         print(f"{exc.id:<36} {state_color(exc.state):<22} {queue:<10} {started:<20} {dur_str:<10}")
 
 
-async def show_execution(executor: Senpuki, args):
+async def show_execution(executor: Stent, args):
     """Show detailed execution info."""
     try:
         state = await executor.state_of(args.id)
@@ -229,7 +229,7 @@ async def show_execution(executor: Senpuki, args):
 # TASK COMMANDS
 # ============================================================================
 
-async def list_tasks(executor: Senpuki, args):
+async def list_tasks(executor: Stent, args):
     """List tasks with filtering."""
     tasks = await executor.backend.list_tasks(
         limit=args.limit,
@@ -249,7 +249,7 @@ async def list_tasks(executor: Senpuki, args):
         print(f"{task.id:<36} {state_color(task.state):<20} {task.kind:<12} {step:<25} {queue:<10}")
 
 
-async def show_task(executor: Senpuki, args):
+async def show_task(executor: Stent, args):
     """Show detailed task info."""
     task = await executor.backend.get_task(args.id)
     if not task:
@@ -297,7 +297,7 @@ async def show_task(executor: Senpuki, args):
 # STATS COMMAND
 # ============================================================================
 
-async def show_stats(executor: Senpuki, args):
+async def show_stats(executor: Stent, args):
     """Show queue and execution statistics."""
     # Count executions by state
     exec_states = ["pending", "running", "completed", "failed", "timed_out", "cancelled"]
@@ -325,7 +325,7 @@ async def show_stats(executor: Senpuki, args):
     running_tasks = await executor.get_running_activities()
     
     # Print stats
-    print(f"\n{Colors.BOLD}Senpuki Statistics{Colors.RESET}")
+    print(f"\n{Colors.BOLD}Stent Statistics{Colors.RESET}")
     print("=" * 50)
     
     print(f"\n{Colors.BOLD}Executions{Colors.RESET}")
@@ -369,7 +369,7 @@ async def show_stats(executor: Senpuki, args):
 # DLQ COMMANDS
 # ============================================================================
 
-async def dlq_list(executor: Senpuki, args):
+async def dlq_list(executor: Stent, args):
     """List dead-letter queue entries."""
     records = await executor.list_dead_letters(limit=args.limit)
     if not records:
@@ -387,7 +387,7 @@ async def dlq_list(executor: Senpuki, args):
         print(f"{task.id:<36} {step:<25} {moved:<20} {reason:<30}")
 
 
-async def dlq_show(executor: Senpuki, args):
+async def dlq_show(executor: Stent, args):
     """Show dead-letter entry details."""
     record = await executor.get_dead_letter(args.id)
     if not record:
@@ -415,7 +415,7 @@ async def dlq_show(executor: Senpuki, args):
     return 0
 
 
-async def dlq_replay(executor: Senpuki, args):
+async def dlq_replay(executor: Stent, args):
     """Replay a dead-letter entry."""
     try:
         new_id = await executor.replay_dead_letter(args.id, queue=args.queue)
@@ -426,7 +426,7 @@ async def dlq_replay(executor: Senpuki, args):
         return 1
 
 
-async def dlq_discard(executor: Senpuki, args):
+async def dlq_discard(executor: Stent, args):
     """Discard a dead-letter entry."""
     if not args.force:
         confirm = input(f"Discard dead-letter task {args.id}? [y/N] ")
@@ -442,7 +442,7 @@ async def dlq_discard(executor: Senpuki, args):
         return 1
 
 
-async def dlq_replay_all(executor: Senpuki, args):
+async def dlq_replay_all(executor: Stent, args):
     """Replay all dead-letter entries."""
     records = await executor.list_dead_letters(limit=1000)
     if not records:
@@ -470,7 +470,7 @@ async def dlq_replay_all(executor: Senpuki, args):
 # CLEANUP COMMAND
 # ============================================================================
 
-async def cleanup(executor: Senpuki, args):
+async def cleanup(executor: Stent, args):
     """Clean up old executions and dead-letter entries."""
     cutoff = datetime.now() - timedelta(days=args.days)
     
@@ -503,7 +503,7 @@ async def cleanup(executor: Senpuki, args):
 # SIGNAL COMMAND
 # ============================================================================
 
-async def send_signal(executor: Senpuki, args):
+async def send_signal(executor: Stent, args):
     """Send a signal to an execution."""
     # Parse payload
     payload = args.payload
@@ -526,9 +526,9 @@ async def send_signal(executor: Senpuki, args):
 # WATCH COMMAND
 # ============================================================================
 
-async def _watch_simple(executor: Senpuki, args):
+async def _watch_simple(executor: Stent, args):
     """Simple fallback watch mode without rich."""
-    print(f"{Colors.BOLD}Senpuki Watch Mode{Colors.RESET} (press Ctrl+C to exit)")
+    print(f"{Colors.BOLD}Stent Watch Mode{Colors.RESET} (press Ctrl+C to exit)")
     print("-" * 50)
     print(f"{Colors.DIM}Tip: Install 'rich' for a better experience{Colors.RESET}\n")
     
@@ -540,7 +540,7 @@ async def _watch_simple(executor: Senpuki, args):
             else:
                 print("\033[2J\033[H", end="")
             
-            print(f"{Colors.BOLD}Senpuki Watch{Colors.RESET} - {datetime.now().strftime('%H:%M:%S')}")
+            print(f"{Colors.BOLD}Stent Watch{Colors.RESET} - {datetime.now().strftime('%H:%M:%S')}")
             print("=" * 50)
             
             # Quick stats
@@ -565,7 +565,7 @@ async def _watch_simple(executor: Senpuki, args):
         print("\nExiting watch mode.")
 
 
-async def _watch_rich(executor: Senpuki, args):
+async def _watch_rich(executor: Stent, args):
     """Rich-based watch mode with fancy UI."""
     from rich.console import Console  # type: ignore
     from rich.live import Live  # type: ignore
@@ -626,7 +626,7 @@ async def _watch_rich(executor: Senpuki, args):
             )
         
         layout = make_layout()
-        layout["header"].update(Panel(f"[bold]Senpuki Watch[/] - {datetime.now().strftime('%H:%M:%S')}"))
+        layout["header"].update(Panel(f"[bold]Stent Watch[/] - {datetime.now().strftime('%H:%M:%S')}"))
         layout["stats"].update(Panel(stats_table, title="Stats"))
         layout["executions"].update(exec_table)
         layout["footer"].update(Panel("[dim]Press Ctrl+C to exit[/]"))
@@ -642,7 +642,7 @@ async def _watch_rich(executor: Senpuki, args):
         console.print("\n[dim]Exiting watch mode.[/]")
 
 
-async def watch(executor: Senpuki, args):
+async def watch(executor: Stent, args):
     """Live monitoring of executions and queues."""
     try:
         import rich  # type: ignore  # noqa: F401
@@ -662,27 +662,27 @@ async def watch(executor: Senpuki, args):
 
 async def main_async():
     parser = argparse.ArgumentParser(
-        description="Senpuki CLI - Manage distributed durable functions",
+        description="Stent CLI - Manage distributed durable functions",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  senpuki list                          List recent executions
-  senpuki list --state running          List running executions
-  senpuki show <execution-id>           Show execution details
-  senpuki stats                         Show queue statistics
-  senpuki dlq list                      List dead-letter queue
-  senpuki dlq replay <task-id>          Replay failed task
-  senpuki cleanup --days 7              Clean up old records
-  senpuki signal <exec-id> my_signal    Send signal
-  senpuki watch                         Live monitoring
+  stent list                          List recent executions
+  stent list --state running          List running executions
+  stent show <execution-id>           Show execution details
+  stent stats                         Show queue statistics
+  stent dlq list                      List dead-letter queue
+  stent dlq replay <task-id>          Replay failed task
+  stent cleanup --days 7              Clean up old records
+  stent signal <exec-id> my_signal    Send signal
+  stent watch                         Live monitoring
         """
     )
     
-    default_db = os.environ.get("SENPUKI_DB", "senpuki.sqlite")
+    default_db = os.environ.get("STENT_DB", "stent.sqlite")
     parser.add_argument(
         "--db", 
         default=default_db, 
-        help=f"Database path or connection string (default: {default_db}, env: SENPUKI_DB)"
+        help=f"Database path or connection string (default: {default_db}, env: STENT_DB)"
     )
     parser.add_argument(
         "--no-color",
@@ -764,12 +764,12 @@ Examples:
     
     # Determine backend
     if "://" in args.db or "postgres" in args.db.lower():
-        backend = Senpuki.backends.PostgresBackend(args.db)
+        backend = Stent.backends.PostgresBackend(args.db)
     else:
-        backend = Senpuki.backends.SQLiteBackend(args.db)
+        backend = Stent.backends.SQLiteBackend(args.db)
 
     await backend.init_db()
-    executor = Senpuki(backend=backend)
+    executor = Stent(backend=backend)
     
     # Handle --all default for cleanup
     if args.command == "cleanup" and not args.executions and not args.dlq:

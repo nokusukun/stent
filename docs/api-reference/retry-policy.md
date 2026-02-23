@@ -1,11 +1,11 @@
 # RetryPolicy API Reference
 
-The `RetryPolicy` dataclass configures how Senpuki handles failures and retries for durable functions.
+The `RetryPolicy` dataclass configures how Stent handles failures and retries for durable functions.
 
 ## Import
 
 ```python
-from senpuki import RetryPolicy
+from stent import RetryPolicy
 ```
 
 ## Definition
@@ -61,9 +61,9 @@ With default settings (`initial_delay=1.0`, `backoff_factor=2.0`, `max_delay=60.
 ### Basic Retry Policy
 
 ```python
-from senpuki import Senpuki, RetryPolicy
+from stent import Stent, RetryPolicy
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(max_attempts=3)
 )
 async def flaky_operation():
@@ -74,7 +74,7 @@ async def flaky_operation():
 ### Aggressive Retries for Transient Errors
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=10,
         initial_delay=0.5,
@@ -91,7 +91,7 @@ async def network_call():
 ### Selective Retry by Exception Type
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=5,
         retry_for=(ConnectionError, TimeoutError, IOError)
@@ -106,7 +106,7 @@ async def external_api_call():
 ### No Retries
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(max_attempts=1)
 )
 async def critical_operation():
@@ -117,7 +117,7 @@ async def critical_operation():
 ### Long-Running with Conservative Retries
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=3,
         initial_delay=60.0,      # Start with 1 minute
@@ -137,7 +137,7 @@ async def batch_import():
 ### What Happens on Failure
 
 1. Function raises an exception
-2. Senpuki checks if exception type matches `retry_for`
+2. Stent checks if exception type matches `retry_for`
 3. If retryable and attempts remaining:
    - Task state set to "pending"
    - Retry delay calculated
@@ -188,7 +188,7 @@ new_task_id = await executor.replay_dead_letter(
 
 ```python
 # Retry network errors aggressively
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=5,
         initial_delay=0.5,
@@ -199,7 +199,7 @@ async def fetch_data(url: str):
     ...
 
 # Be conservative with external APIs
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=3,
         initial_delay=5.0,
@@ -210,7 +210,7 @@ async def call_external_api(data: dict):
     ...
 
 # No retries for idempotent operations that shouldn't repeat
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(max_attempts=1),
     idempotent=True
 )
@@ -221,7 +221,7 @@ async def process_payment(order_id: str):
 ### Combining with Idempotency
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,  # Ensures exactly-once execution
     retry_policy=RetryPolicy(
         max_attempts=5,

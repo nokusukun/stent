@@ -1,6 +1,6 @@
 from typing import Protocol, List, Optional
 from datetime import datetime, timedelta
-from senpuki.core import ExecutionRecord, TaskRecord, ExecutionProgress, SignalRecord, DeadLetterRecord
+from stent.core import ExecutionRecord, TaskRecord, ExecutionProgress, SignalRecord, DeadLetterRecord
 
 class Backend(Protocol):
     async def init_db(self) -> None: ...

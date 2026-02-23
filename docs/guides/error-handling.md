@@ -1,12 +1,12 @@
 # Error Handling & Retries
 
-This guide covers how Senpuki handles failures, configures retries, and manages the Dead Letter Queue.
+This guide covers how Stent handles failures, configures retries, and manages the Dead Letter Queue.
 
 ## How Failures Work
 
 When a durable function raises an exception:
 
-1. Senpuki catches the exception
+1. Stent catches the exception
 2. Checks if it's retryable (matches `retry_for` types)
 3. If retryable and attempts remain:
    - Calculates retry delay
@@ -43,7 +43,7 @@ Reschedule task (pending)
 
 ### Default Policy
 
-Without a retry policy, Senpuki uses these defaults:
+Without a retry policy, Stent uses these defaults:
 
 ```python
 RetryPolicy(
@@ -59,9 +59,9 @@ RetryPolicy(
 ### Custom Retry Policy
 
 ```python
-from senpuki import Senpuki, RetryPolicy
+from stent import Stent, RetryPolicy
 
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=5,          # Try up to 5 times
         initial_delay=0.5,       # First retry after 0.5s
@@ -97,7 +97,7 @@ Example with defaults (initial=1, factor=2, max=60):
 
 ```python
 # Only retry on network errors, not validation errors
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=5,
         retry_for=(ConnectionError, TimeoutError, IOError)
@@ -115,7 +115,7 @@ async def api_call(data: dict) -> dict:
 ### Disable Retries
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(max_attempts=1)
 )
 async def no_retry_operation():
@@ -128,9 +128,9 @@ async def no_retry_operation():
 ### Using Result Type
 
 ```python
-from senpuki import Result
+from stent import Result
 
-@Senpuki.durable()
+@Stent.durable()
 async def safe_activity(data: dict) -> Result[dict, str]:
     try:
         result = await risky_operation(data)
@@ -138,7 +138,7 @@ async def safe_activity(data: dict) -> Result[dict, str]:
     except Exception as e:
         return Result.Error(str(e))
 
-@Senpuki.durable()
+@Stent.durable()
 async def orchestrator_with_result(items: list) -> Result[list, str]:
     results = []
     
@@ -159,7 +159,7 @@ async def orchestrator_with_result(items: list) -> Result[list, str]:
 ### Using Try/Except
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def orchestrator_with_exceptions(data: dict) -> dict:
     try:
         step1 = await first_step(data)
@@ -172,7 +172,7 @@ async def orchestrator_with_exceptions(data: dict) -> dict:
         step2 = await second_step(step1)
     except TemporaryError as e:
         # Retry manually
-        await Senpuki.sleep("5s")
+        await Stent.sleep("5s")
         step2 = await second_step(step1)
     
     return step2
@@ -182,9 +182,9 @@ async def orchestrator_with_exceptions(data: dict) -> dict:
 
 ```python
 import asyncio
-from senpuki import Result
+from stent import Result
 
-@Senpuki.durable()
+@Stent.durable()
 async def batch_with_partial_failure(items: list[dict]) -> Result[dict, None]:
     tasks = [process_item(item) for item in items]
     
@@ -277,15 +277,15 @@ success = await executor.discard_dead_letter(task_id)
 
 ```bash
 # List dead letters
-senpuki dlq list
-senpuki dlq list --limit 100
+stent dlq list
+stent dlq list --limit 100
 
 # Show details
-senpuki dlq show <task_id>
+stent dlq show <task_id>
 
 # Replay
-senpuki dlq replay <task_id>
-senpuki dlq replay <task_id> --queue retry
+stent dlq replay <task_id>
+stent dlq replay <task_id> --queue retry
 ```
 
 ## Workflow Timeouts
@@ -346,7 +346,7 @@ exec_id = await executor.dispatch(
 ### Simple Compensation
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def workflow_with_cleanup(data: dict) -> Result[dict, str]:
     resource = None
     
@@ -369,7 +369,7 @@ async def workflow_with_cleanup(data: dict) -> Result[dict, str]:
 ### Saga Pattern
 
 ```python
-@Senpuki.durable()
+@Stent.durable()
 async def distributed_transaction(order: dict) -> Result[dict, str]:
     compensations = []
     
@@ -408,7 +408,7 @@ async def distributed_transaction(order: dict) -> Result[dict, str]:
 
 ```python
 # Transient network errors: aggressive retries
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=10,
         initial_delay=0.1,
@@ -419,7 +419,7 @@ async def network_call():
     ...
 
 # Rate limiting: slower retries
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(
         max_attempts=5,
         initial_delay=60.0,
@@ -431,7 +431,7 @@ async def rate_limited_api():
     ...
 
 # Data errors: no retries
-@Senpuki.durable(
+@Stent.durable(
     retry_policy=RetryPolicy(max_attempts=1)
 )
 async def process_data(data: dict):
@@ -441,7 +441,7 @@ async def process_data(data: dict):
 ### 2. Make Operations Idempotent
 
 ```python
-@Senpuki.durable(
+@Stent.durable(
     idempotent=True,
     retry_policy=RetryPolicy(max_attempts=5)
 )
@@ -471,15 +471,15 @@ async def monitor_dlq():
 
 ```python
 import logging
-from senpuki import install_structured_logging
+from stent import install_structured_logging
 
-# Add Senpuki context to all logs
+# Add Stent context to all logs
 install_structured_logging(logging.getLogger())
 
-@Senpuki.durable()
+@Stent.durable()
 async def logged_operation(data: dict) -> dict:
     logger.info("Processing started", extra={"data_id": data["id"]})
-    # Logs will include senpuki_execution_id, senpuki_task_id
+    # Logs will include stent_execution_id, stent_task_id
     ...
 ```
 
@@ -491,11 +491,11 @@ import pytest
 @pytest.mark.asyncio
 async def test_workflow_handles_failure():
     # Setup with a function that will fail
-    @Senpuki.durable(retry_policy=RetryPolicy(max_attempts=1))
+    @Stent.durable(retry_policy=RetryPolicy(max_attempts=1))
     async def failing_activity():
         raise ValueError("Expected failure")
     
-    @Senpuki.durable()
+    @Stent.durable()
     async def workflow():
         try:
             await failing_activity()

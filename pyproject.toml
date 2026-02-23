@@ -1,6 +1,6 @@
 [project]
-name = "senpuki"
-version = "0.3.0"
+name = "stent"
+version = "1.0.0"
 description = "Distributed Durable Functions in Python"
 authors = [
   { name="noku", email="noku@onlypa.ws" },
@@ -15,11 +15,11 @@ dependencies = [
 ]
 
 [project.scripts]
-senpuki = "senpuki.cli:main"
+stent = "stent.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/nokusukun/senpuki"
-Issues = "https://github.com/nokusukun/senpuki/issues"
+Homepage = "https://github.com/nokusukun/stent"
+Issues = "https://github.com/nokusukun/stent/issues"
 
 [dependency-groups]
 dev = [

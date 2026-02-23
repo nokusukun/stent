@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Any, Callable, Sequence
 
-from senpuki.core import DeadLetterRecord, ExecutionProgress, ExecutionRecord, SignalRecord, TaskRecord, RetryPolicy
+from stent.core import DeadLetterRecord, ExecutionProgress, ExecutionRecord, SignalRecord, TaskRecord, RetryPolicy
 
 PlaceholderFn = Callable[[int], str]
 
@@ -52,7 +52,7 @@ def _retry_policy_from_dict(data: dict[str, Any] | None) -> RetryPolicy | None:
         return None
     
     # Import here to avoid circular imports
-    from senpuki.utils.serialization import get_exception_class
+    from stent.utils.serialization import get_exception_class
     
     # Deserialize retry_for exception classes
     retry_for_names = data.get("retry_for", ["Exception"])

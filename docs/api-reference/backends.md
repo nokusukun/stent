@@ -1,6 +1,6 @@
 # Backends API Reference
 
-Senpuki supports multiple storage backends for persisting workflow state. This document covers the available backends and their configuration.
+Stent supports multiple storage backends for persisting workflow state. This document covers the available backends and their configuration.
 
 ## Backend Protocol
 
@@ -73,9 +73,9 @@ The SQLite backend is perfect for development, testing, and single-node deployme
 ### Creation
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
-backend = Senpuki.backends.SQLiteBackend("path/to/database.sqlite")
+backend = Stent.backends.SQLiteBackend("path/to/database.sqlite")
 await backend.init_db()
 ```
 
@@ -92,13 +92,13 @@ The SQLite backend accepts a file path:
 
 ```python
 # Relative path
-backend = Senpuki.backends.SQLiteBackend("workflow.db")
+backend = Stent.backends.SQLiteBackend("workflow.db")
 
 # Absolute path
-backend = Senpuki.backends.SQLiteBackend("/var/lib/senpuki/workflow.db")
+backend = Stent.backends.SQLiteBackend("/var/lib/stent/workflow.db")
 
 # In-memory (for testing)
-backend = Senpuki.backends.SQLiteBackend(":memory:")
+backend = Stent.backends.SQLiteBackend(":memory:")
 ```
 
 ### Database Schema
@@ -121,7 +121,7 @@ The SQLite backend creates the following tables:
 1. **Use WAL mode** (enabled by default):
    ```python
    # WAL mode allows concurrent reads during writes
-   # Senpuki enables this automatically
+   # Stent enables this automatically
    ```
 
 2. **Regular backups**:
@@ -150,10 +150,10 @@ The PostgreSQL backend is recommended for production deployments.
 ### Creation
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
-backend = Senpuki.backends.PostgresBackend(
-    "postgresql://user:password@localhost:5432/senpuki"
+backend = Stent.backends.PostgresBackend(
+    "postgresql://user:password@localhost:5432/stent"
 )
 await backend.init_db()
 ```
@@ -175,18 +175,18 @@ Examples:
 
 ```python
 # Basic connection
-backend = Senpuki.backends.PostgresBackend(
-    "postgresql://senpuki:password@localhost/senpuki"
+backend = Stent.backends.PostgresBackend(
+    "postgresql://stent:password@localhost/stent"
 )
 
 # With SSL
-backend = Senpuki.backends.PostgresBackend(
-    "postgresql://senpuki:password@db.example.com/senpuki?sslmode=require"
+backend = Stent.backends.PostgresBackend(
+    "postgresql://stent:password@db.example.com/stent?sslmode=require"
 )
 
 # With connection pool settings
-backend = Senpuki.backends.PostgresBackend(
-    "postgresql://senpuki:password@localhost/senpuki"
+backend = Stent.backends.PostgresBackend(
+    "postgresql://stent:password@localhost/stent"
     "?min_size=5&max_size=20"
 )
 ```
@@ -197,17 +197,17 @@ Before using the PostgreSQL backend, create the database:
 
 ```sql
 -- Create database
-CREATE DATABASE senpuki;
+CREATE DATABASE stent;
 
 -- Create user (optional)
-CREATE USER senpuki WITH PASSWORD 'your-secure-password';
-GRANT ALL PRIVILEGES ON DATABASE senpuki TO senpuki;
+CREATE USER stent WITH PASSWORD 'your-secure-password';
+GRANT ALL PRIVILEGES ON DATABASE stent TO stent;
 ```
 
 Then initialize the schema:
 
 ```python
-backend = Senpuki.backends.PostgresBackend(dsn)
+backend = Stent.backends.PostgresBackend(dsn)
 await backend.init_db()  # Creates tables if they don't exist
 ```
 
@@ -223,7 +223,7 @@ The PostgreSQL backend uses `asyncpg` connection pooling. Configure via DSN para
 | `max_inactive_connection_lifetime` | 300 | Seconds before idle connection close |
 
 ```python
-backend = Senpuki.backends.PostgresBackend(
+backend = Stent.backends.PostgresBackend(
     "postgresql://user:pass@host/db"
     "?min_size=5&max_size=50&max_inactive_connection_lifetime=600"
 )
@@ -239,7 +239,7 @@ backend = Senpuki.backends.PostgresBackend(
 
 2. **Enable SSL in production**:
    ```python
-   backend = Senpuki.backends.PostgresBackend(
+   backend = Stent.backends.PostgresBackend(
        "postgresql://user:pass@host/db?sslmode=require"
    )
    ```
@@ -256,7 +256,7 @@ backend = Senpuki.backends.PostgresBackend(
 5. **Backup strategy**:
    ```bash
    # Regular backups with pg_dump
-   pg_dump -h localhost -U senpuki senpuki > backup.sql
+   pg_dump -h localhost -U stent stent > backup.sql
    
    # Or use continuous archiving for point-in-time recovery
    ```
@@ -268,8 +268,8 @@ backend = Senpuki.backends.PostgresBackend(
 You can implement a custom backend by following the `Backend` protocol:
 
 ```python
-from senpuki.backend.base import Backend
-from senpuki.core import ExecutionRecord, TaskRecord, SignalRecord, DeadLetterRecord, ExecutionProgress
+from stent.backend.base import Backend
+from stent.core import ExecutionRecord, TaskRecord, SignalRecord, DeadLetterRecord, ExecutionProgress
 from datetime import datetime, timedelta
 from typing import List
 
@@ -320,12 +320,12 @@ class MyCustomBackend:
 ### Using Custom Backend
 
 ```python
-from senpuki import Senpuki
+from stent import Stent
 
 custom_backend = MyCustomBackend(config)
 await custom_backend.init_db()
 
-executor = Senpuki(backend=custom_backend)
+executor = Stent(backend=custom_backend)
 ```
 
 ---
