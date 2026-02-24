@@ -63,117 +63,126 @@ class PostgresBackend(Backend):
             )
         
         assert self.pool is not None
-        
+
+        # Use an advisory lock so concurrent workers don't race on schema
+        # creation.  SERIAL columns implicitly create sequences/types which
+        # are not protected by IF NOT EXISTS, causing
+        # UniqueViolationError on pg_type_typname_nsp_index.
+        _LOCK_ID = 0x5374656E74  # b'Stent' as int
         async with self.pool.acquire() as conn:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS signals (
-                    execution_id TEXT,
-                    name TEXT,
-                    payload BYTEA,
-                    created_at TIMESTAMP,
-                    consumed BOOLEAN,
-                    consumed_at TIMESTAMP,
-                    PRIMARY KEY (execution_id, name)
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS executions (
-                    id TEXT PRIMARY KEY,
-                    root_function TEXT,
-                    state TEXT,
-                    args BYTEA,
-                    kwargs BYTEA,
-                    result BYTEA,
-                    error BYTEA,
-                    retries INTEGER,
-                    created_at TIMESTAMP,
-                    started_at TIMESTAMP,
-                    completed_at TIMESTAMP,
-                    expiry_at TIMESTAMP,
-                    tags TEXT,
-                    priority INTEGER,
-                    queue TEXT
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS execution_progress (
-                    execution_id TEXT,
-                    step TEXT,
-                    status TEXT,
-                    started_at TIMESTAMP,
-                    completed_at TIMESTAMP,
-                    detail TEXT,
-                    ordinal SERIAL PRIMARY KEY
-                )
-            """)
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_progress_exec ON execution_progress(execution_id)")
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id TEXT PRIMARY KEY,
-                    execution_id TEXT,
-                    step_name TEXT,
-                    kind TEXT,
-                    parent_task_id TEXT,
-                    state TEXT,
-                    args BYTEA,
-                    kwargs BYTEA,
-                    result BYTEA,
-                    error BYTEA,
-                    retries INTEGER,
-                    created_at TIMESTAMP,
-                    started_at TIMESTAMP,
-                    completed_at TIMESTAMP,
-                    worker_id TEXT,
-                    lease_expires_at TIMESTAMP,
-                    tags TEXT,
-                    priority INTEGER,
-                    queue TEXT,
-                    idempotency_key TEXT,
-                    retry_policy TEXT,
-                    scheduled_for TIMESTAMP
-                )
-            """)
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_state_queue_scheduled ON tasks(state, queue, scheduled_for)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_priority_created ON tasks(priority, created_at)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_execution ON tasks(execution_id)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_step_lease ON tasks(step_name, state, lease_expires_at)")
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS dead_tasks (
-                    id TEXT PRIMARY KEY,
-                    reason TEXT,
-                    moved_at TIMESTAMP,
-                    data TEXT -- full JSON dump of task
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS cache (
-                    key TEXT PRIMARY KEY,
-                    value BYTEA,
-                    expires_at TIMESTAMP
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS idempotency (
-                    key TEXT PRIMARY KEY,
-                    value BYTEA
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS execution_counters (
-                    execution_id TEXT,
-                    name TEXT,
-                    value DOUBLE PRECISION NOT NULL,
-                    PRIMARY KEY (execution_id, name)
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS execution_state (
-                    execution_id TEXT,
-                    key TEXT,
-                    value BYTEA,
-                    PRIMARY KEY (execution_id, key)
-                )
-            """)
+            await conn.execute("SELECT pg_advisory_lock($1)", _LOCK_ID)
+            try:
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS signals (
+                        execution_id TEXT,
+                        name TEXT,
+                        payload BYTEA,
+                        created_at TIMESTAMP,
+                        consumed BOOLEAN,
+                        consumed_at TIMESTAMP,
+                        PRIMARY KEY (execution_id, name)
+                    )
+                """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS executions (
+                        id TEXT PRIMARY KEY,
+                        root_function TEXT,
+                        state TEXT,
+                        args BYTEA,
+                        kwargs BYTEA,
+                        result BYTEA,
+                        error BYTEA,
+                        retries INTEGER,
+                        created_at TIMESTAMP,
+                        started_at TIMESTAMP,
+                        completed_at TIMESTAMP,
+                        expiry_at TIMESTAMP,
+                        tags TEXT,
+                        priority INTEGER,
+                        queue TEXT
+                    )
+                """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS execution_progress (
+                        execution_id TEXT,
+                        step TEXT,
+                        status TEXT,
+                        started_at TIMESTAMP,
+                        completed_at TIMESTAMP,
+                        detail TEXT,
+                        ordinal SERIAL PRIMARY KEY
+                    )
+                """)
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_progress_exec ON execution_progress(execution_id)")
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS tasks (
+                        id TEXT PRIMARY KEY,
+                        execution_id TEXT,
+                        step_name TEXT,
+                        kind TEXT,
+                        parent_task_id TEXT,
+                        state TEXT,
+                        args BYTEA,
+                        kwargs BYTEA,
+                        result BYTEA,
+                        error BYTEA,
+                        retries INTEGER,
+                        created_at TIMESTAMP,
+                        started_at TIMESTAMP,
+                        completed_at TIMESTAMP,
+                        worker_id TEXT,
+                        lease_expires_at TIMESTAMP,
+                        tags TEXT,
+                        priority INTEGER,
+                        queue TEXT,
+                        idempotency_key TEXT,
+                        retry_policy TEXT,
+                        scheduled_for TIMESTAMP
+                    )
+                """)
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_state_queue_scheduled ON tasks(state, queue, scheduled_for)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_priority_created ON tasks(priority, created_at)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_execution ON tasks(execution_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_step_lease ON tasks(step_name, state, lease_expires_at)")
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS dead_tasks (
+                        id TEXT PRIMARY KEY,
+                        reason TEXT,
+                        moved_at TIMESTAMP,
+                        data TEXT -- full JSON dump of task
+                    )
+                """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS cache (
+                        key TEXT PRIMARY KEY,
+                        value BYTEA,
+                        expires_at TIMESTAMP
+                    )
+                """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS idempotency (
+                        key TEXT PRIMARY KEY,
+                        value BYTEA
+                    )
+                """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS execution_counters (
+                        execution_id TEXT,
+                        name TEXT,
+                        value DOUBLE PRECISION NOT NULL,
+                        PRIMARY KEY (execution_id, name)
+                    )
+                """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS execution_state (
+                        execution_id TEXT,
+                        key TEXT,
+                        value BYTEA,
+                        PRIMARY KEY (execution_id, key)
+                    )
+                """)
+            finally:
+                await conn.execute("SELECT pg_advisory_unlock($1)", _LOCK_ID)
 
     def _execution_row_values(self, record: ExecutionRecord) -> tuple[Any, ...]:
         return execution_row_values(record)

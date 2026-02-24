@@ -12,7 +12,7 @@ Commands:
     dlq         Dead-letter queue operations
     cleanup     Clean up old executions
     signal      Send signal to execution
-    watch       Live monitoring (requires rich)
+    watch       Live monitoring dashboard
 
 Environment:
     STENT_DB  Default database path (default: stent.sqlite)
@@ -21,7 +21,11 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
+import time
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, cast
 
@@ -526,134 +530,471 @@ async def send_signal(executor: Stent, args):
 # WATCH COMMAND
 # ============================================================================
 
-async def _watch_simple(executor: Stent, args):
-    """Simple fallback watch mode without rich."""
-    print(f"{Colors.BOLD}Stent Watch Mode{Colors.RESET} (press Ctrl+C to exit)")
-    print("-" * 50)
-    print(f"{Colors.DIM}Tip: Install 'rich' for a better experience{Colors.RESET}\n")
-    
-    try:
-        while True:
-            # Clear screen (basic)
-            if os.name == "nt":
-                os.system("cls")
-            else:
-                print("\033[2J\033[H", end="")
-            
-            print(f"{Colors.BOLD}Stent Watch{Colors.RESET} - {datetime.now().strftime('%H:%M:%S')}")
-            print("=" * 50)
-            
-            # Quick stats
-            pending = await executor.backend.count_tasks(state="pending")
-            running = await executor.backend.count_tasks(state="running")
-            dlq = await executor.backend.count_dead_tasks()
-            
-            print(f"\nPending: {Colors.YELLOW}{pending}{Colors.RESET}  "
-                  f"Running: {Colors.BLUE}{running}{Colors.RESET}  "
-                  f"DLQ: {Colors.RED}{dlq}{Colors.RESET}")
-            
-            # Recent executions
-            print(f"\n{Colors.BOLD}Recent Executions{Colors.RESET}")
-            executions = await executor.list_executions(limit=10)
-            for exc in executions:
-                print(f"  {exc.id[:8]}... {state_color(exc.state)}")
-            
-            print(f"\n{Colors.DIM}Refreshing in {args.interval}s...{Colors.RESET}")
-            await asyncio.sleep(args.interval)
-            
-    except KeyboardInterrupt:
-        print("\nExiting watch mode.")
+# ── Watch dashboard dataclasses ──────────────────────────────────────────
+
+@dataclass
+class DashboardCounts:
+    exec_pending: int = 0
+    exec_running: int = 0
+    exec_completed: int = 0
+    exec_failed: int = 0
+    exec_timed_out: int = 0
+    exec_cancelled: int = 0
+    task_pending: int = 0
+    task_running: int = 0
+    task_completed: int = 0
+    task_failed: int = 0
+    dlq: int = 0
 
 
-async def _watch_rich(executor: Stent, args):
-    """Rich-based watch mode with fancy UI."""
-    from rich.console import Console  # type: ignore
-    from rich.live import Live  # type: ignore
-    from rich.table import Table  # type: ignore
-    from rich.panel import Panel  # type: ignore
-    from rich.layout import Layout  # type: ignore
-    
-    console = Console()
-    
-    def make_layout():
-        layout = Layout()
-        layout.split_column(
-            Layout(name="header", size=3),
-            Layout(name="main"),
-            Layout(name="footer", size=3),
+@dataclass
+class ActiveExecution:
+    id: str
+    root_function: str
+    state: str
+    started_at: datetime | None
+    steps_completed: int
+    steps_total: int
+
+
+@dataclass
+class RunningTask:
+    worker_id: str
+    step_name: str
+    execution_id: str
+    started_at: datetime | None
+
+
+@dataclass
+class RecentCompletion:
+    id: str
+    root_function: str
+    state: str
+    duration: timedelta | None
+
+
+@dataclass
+class QueueDepth:
+    queue: str
+    count: int
+
+
+@dataclass
+class DashboardData:
+    counts: DashboardCounts
+    active_executions: list[ActiveExecution]
+    running_tasks: list[RunningTask]
+    recent_completions: list[RecentCompletion]
+    queue_depths: list[QueueDepth]
+    dlq_entries: list[DeadLetterRecord]
+    gather_duration: float = 0.0
+
+
+@dataclass
+class ThroughputMetrics:
+    tasks_per_min: float = 0.0
+    avg_duration_s: float = 0.0
+    error_rate_pct: float = 0.0
+
+
+# ── Throughput tracker ───────────────────────────────────────────────────
+
+class ThroughputTracker:
+    """Ring buffer of (timestamp, completed_count, failed_count) snapshots."""
+
+    def __init__(self, window: float = 60.0):
+        self._window = window
+        self._snapshots: deque[tuple[float, int, int]] = deque()
+        self._durations: deque[float] = deque(maxlen=200)
+
+    def record(self, completed: int, failed: int, durations: list[float]):
+        now = time.monotonic()
+        self._snapshots.append((now, completed, failed))
+        self._durations.extend(durations)
+        # Evict stale entries
+        cutoff = now - self._window
+        while self._snapshots and self._snapshots[0][0] < cutoff:
+            self._snapshots.popleft()
+
+    def metrics(self) -> ThroughputMetrics:
+        if len(self._snapshots) < 2:
+            avg_d = (sum(self._durations) / len(self._durations)) if self._durations else 0.0
+            return ThroughputMetrics(avg_duration_s=avg_d)
+
+        first = self._snapshots[0]
+        last = self._snapshots[-1]
+        elapsed = last[0] - first[0]
+        if elapsed <= 0:
+            return ThroughputMetrics()
+
+        completed_delta = last[1] - first[1]
+        failed_delta = last[2] - first[2]
+        total_delta = completed_delta + failed_delta
+        tpm = (completed_delta / elapsed) * 60.0 if elapsed > 0 else 0.0
+        err = (failed_delta / total_delta * 100.0) if total_delta > 0 else 0.0
+        avg_d = (sum(self._durations) / len(self._durations)) if self._durations else 0.0
+
+        return ThroughputMetrics(tasks_per_min=max(0, tpm), avg_duration_s=avg_d, error_rate_pct=err)
+
+
+# ── Data gathering ───────────────────────────────────────────────────────
+
+async def _gather_dashboard_data(executor: Stent, *, active_limit: int = 10, recent_limit: int = 10) -> DashboardData:
+    backend = executor.backend
+
+    # Round 1: all counts + lists in one gather
+    (
+        exec_pend, exec_run, exec_comp, exec_fail, exec_to, exec_canc,
+        task_pend, task_run, task_comp, task_fail,
+        dlq_count,
+        running_execs_raw, running_tasks_raw, recent_execs_raw,
+        pending_tasks_raw, completed_tasks_raw,
+    ) = await asyncio.gather(
+        backend.count_executions(state="pending"),
+        backend.count_executions(state="running"),
+        backend.count_executions(state="completed"),
+        backend.count_executions(state="failed"),
+        backend.count_executions(state="timed_out"),
+        backend.count_executions(state="cancelled"),
+        backend.count_tasks(state="pending"),
+        backend.count_tasks(state="running"),
+        backend.count_tasks(state="completed"),
+        backend.count_tasks(state="failed"),
+        backend.count_dead_tasks(),
+        backend.list_executions(limit=active_limit, state="running"),
+        backend.list_tasks(limit=active_limit, state="running"),
+        backend.list_executions(limit=recent_limit),
+        backend.list_tasks(limit=1000, state="pending"),
+        backend.list_tasks(limit=20, state="completed"),
+    )
+
+    counts = DashboardCounts(
+        exec_pending=exec_pend, exec_running=exec_run, exec_completed=exec_comp,
+        exec_failed=exec_fail, exec_timed_out=exec_to, exec_cancelled=exec_canc,
+        task_pending=task_pend, task_running=task_run,
+        task_completed=task_comp, task_failed=task_fail,
+        dlq=dlq_count,
+    )
+
+    # Round 2: fetch full records for running executions to get progress
+    active_executions: list[ActiveExecution] = []
+    if running_execs_raw:
+        full_records = await asyncio.gather(
+            *(backend.get_execution(r.id) for r in running_execs_raw)
         )
-        layout["main"].split_row(
-            Layout(name="stats", ratio=1),
-            Layout(name="executions", ratio=2),
-        )
-        return layout
-    
-    async def generate_display():
-        # Stats
-        pending = await executor.backend.count_tasks(state="pending")
-        running = await executor.backend.count_tasks(state="running")
-        completed = await executor.backend.count_tasks(state="completed")
-        failed = await executor.backend.count_tasks(state="failed")
-        dlq = await executor.backend.count_dead_tasks()
-        
-        stats_table = Table(show_header=False, box=None)
-        stats_table.add_row("Pending", f"[yellow]{pending}[/]")
-        stats_table.add_row("Running", f"[blue]{running}[/]")
-        stats_table.add_row("Completed", f"[green]{completed}[/]")
-        stats_table.add_row("Failed", f"[red]{failed}[/]")
-        stats_table.add_row("DLQ", f"[red]{dlq}[/]")
-        
-        # Executions
-        exec_table = Table(title="Recent Executions")
-        exec_table.add_column("ID", style="dim")
-        exec_table.add_column("State")
-        exec_table.add_column("Started")
-        
-        executions = await executor.list_executions(limit=15)
-        for exc in executions:
-            state_style = {
-                "pending": "yellow",
-                "running": "blue",
-                "completed": "green",
-                "failed": "red",
-            }.get(exc.state, "white")
-            
-            started = format_time_short(exc.started_at)
-            exec_table.add_row(
-                exc.id[:12] + "...",
-                f"[{state_style}]{exc.state}[/]",
-                started
-            )
-        
-        layout = make_layout()
-        layout["header"].update(Panel(f"[bold]Stent Watch[/] - {datetime.now().strftime('%H:%M:%S')}"))
-        layout["stats"].update(Panel(stats_table, title="Stats"))
-        layout["executions"].update(exec_table)
-        layout["footer"].update(Panel("[dim]Press Ctrl+C to exit[/]"))
-        
-        return layout
-    
-    try:
-        with Live(await generate_display(), console=console, refresh_per_second=1) as live:
-            while True:
-                await asyncio.sleep(args.interval)
-                live.update(await generate_display())
-    except KeyboardInterrupt:
-        console.print("\n[dim]Exiting watch mode.[/]")
+        for rec in full_records:
+            if rec is None:
+                continue
+            total = len(rec.progress)
+            done = sum(1 for p in rec.progress if p.status in ("completed", "cache_hit"))
+            active_executions.append(ActiveExecution(
+                id=rec.id, root_function=rec.root_function, state=rec.state,
+                started_at=rec.started_at, steps_completed=done, steps_total=total,
+            ))
 
+    # Running tasks
+    now = datetime.now()
+    running_tasks = [
+        RunningTask(
+            worker_id=t.worker_id or "unknown",
+            step_name=t.step_name,
+            execution_id=t.execution_id,
+            started_at=t.started_at,
+        )
+        for t in running_tasks_raw
+    ]
+
+    # Recent completions (terminal states only)
+    recent_completions: list[RecentCompletion] = []
+    for exc in recent_execs_raw:
+        if exc.state not in ("completed", "failed", "timed_out", "cancelled"):
+            continue
+        dur = None
+        if exc.started_at:
+            end = exc.completed_at or now
+            dur = end - exc.started_at
+        recent_completions.append(RecentCompletion(
+            id=exc.id, root_function=exc.root_function,
+            state=exc.state, duration=dur,
+        ))
+
+    # Queue depths
+    queues: dict[str, int] = {}
+    for t in pending_tasks_raw:
+        q = t.queue or "default"
+        queues[q] = queues.get(q, 0) + 1
+    queue_depths = [QueueDepth(q, c) for q, c in sorted(queues.items())]
+
+    # Durations from recently completed tasks (for throughput tracker)
+    # stored on data so the watch loop can feed them to the tracker
+    durations: list[float] = []
+    for t in completed_tasks_raw:
+        if t.started_at and t.completed_at:
+            durations.append((t.completed_at - t.started_at).total_seconds())
+
+    # DLQ entries
+    dlq_entries: list[DeadLetterRecord] = []
+    if dlq_count > 0:
+        dlq_entries = await executor.list_dead_letters(limit=5)
+
+    data = DashboardData(
+        counts=counts, active_executions=active_executions,
+        running_tasks=running_tasks, recent_completions=recent_completions,
+        queue_depths=queue_depths, dlq_entries=dlq_entries,
+    )
+    # stash durations for tracker
+    data._durations = durations  # type: ignore[attr-defined]
+    return data
+
+
+# ── Rendering primitives ─────────────────────────────────────────────────
+
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _visible_len(s: str) -> int:
+    """Length of string ignoring ANSI escape sequences."""
+    return len(_ANSI_RE.sub("", s))
+
+
+def _pad(s: str, width: int) -> str:
+    """Pad string to width, accounting for ANSI escapes."""
+    vl = _visible_len(s)
+    if vl >= width:
+        return s
+    return s + " " * (width - vl)
+
+
+def _hline(w: int, left: str = "├", right: str = "┤") -> str:
+    return left + "─" * (w - 2) + right
+
+
+def _row(content: str, w: int) -> str:
+    """Content padded inside │ ... │"""
+    inner = w - 4  # "│ " + content + " │"
+    return "│ " + _pad(content, inner) + " │"
+
+
+def _progress_bar(completed: int, total: int, width: int = 6) -> str:
+    if total == 0:
+        return " " * width + " 0/0"
+    filled = round(completed / total * width)
+    bar = (
+        f"{Colors.GREEN}{'█' * filled}{Colors.RESET}"
+        f"{Colors.DIM}{'░' * (width - filled)}{Colors.RESET}"
+    )
+    return f"{bar} {completed}/{total}"
+
+
+def _render_section(title: str, rows: list[str], w: int) -> list[str]:
+    """Separator line + bold title + content rows."""
+    lines = [_hline(w)]
+    lines.append(_row(f"{Colors.BOLD}{title}{Colors.RESET}", w))
+    for r in rows:
+        lines.append(_row(r, w))
+    return lines
+
+
+# ── Dashboard renderer ───────────────────────────────────────────────────
+
+def _render_dashboard(
+    data: DashboardData,
+    metrics: ThroughputMetrics,
+    width: int,
+    height: int,
+) -> str:
+    w = max(width, 60)
+    now_str = datetime.now().strftime("%H:%M:%S")
+    gather_str = f"{data.gather_duration:.1f}s"
+    c = data.counts
+
+    lines: list[str] = []
+
+    # ── Header ──
+    lines.append("┌" + "─" * (w - 2) + "┐")
+    header_left = f"{Colors.BOLD}STENT WATCH{Colors.RESET}"
+    header_right = f"{now_str}  {gather_str}"
+    header_gap = w - 4 - _visible_len(header_left) - len(header_right)
+    lines.append("│ " + header_left + " " * max(header_gap, 1) + header_right + " │")
+
+    # ── Summary bar ──
+    summary = (
+        f"{Colors.YELLOW}● {c.exec_pending} pend{Colors.RESET}   "
+        f"{Colors.BLUE}▶ {c.exec_running} run{Colors.RESET}   "
+        f"{Colors.GREEN}✓ {c.exec_completed} ok{Colors.RESET}   "
+        f"{Colors.RED}✗ {c.exec_failed} fail{Colors.RESET}   "
+        f"{Colors.RED}☠ {c.dlq} dlq{Colors.RESET}"
+    )
+    lines.append(_hline(w))
+    lines.append(_row(summary, w))
+
+    # ── Throughput bar ──
+    tpm_str = f"{metrics.tasks_per_min:.0f}" if metrics.tasks_per_min >= 1 else f"{metrics.tasks_per_min:.1f}"
+    avg_str = f"{metrics.avg_duration_s:.1f}s" if metrics.avg_duration_s > 0 else "-"
+    err_str = f"{metrics.error_rate_pct:.1f}%"
+    throughput_line = f"Throughput [{tpm_str}/min]   Avg Duration [{avg_str}]   Err% [{err_str}]"
+    lines.append(_hline(w))
+    lines.append(_row(throughput_line, w))
+
+    # Compute how many rows remain for sections
+    # Used lines so far: top border + header + hline + summary + hline + throughput = 6
+    # Bottom: hline + footer + bottom border = 3 (we add later)
+    # Each section: 1 hline + 1 title + N rows
+    used = len(lines) + 3  # bottom overhead
+    available = max(height - used, 10)
+
+    # Decide section row counts based on data
+    section_data_counts = {
+        "active": len(data.active_executions),
+        "running": len(data.running_tasks),
+        "recent": len(data.recent_completions),
+        "queues": len(data.queue_depths),
+        "dlq": len(data.dlq_entries),
+    }
+    section_rows = _allocate_rows(available, section_data_counts)
+
+    inner = w - 4
+
+    # ── Active Executions ──
+    if section_rows["active"] > 0 or data.active_executions:
+        rows: list[str] = []
+        for exc in data.active_executions[:section_rows.get("active", 3)]:
+            eid = exc.id[:8]
+            now_t = datetime.now()
+            dur = ""
+            if exc.started_at:
+                dur = format_duration(now_t - exc.started_at)
+            func = truncate(exc.root_function, max(inner - 45, 10))
+            bar = _progress_bar(exc.steps_completed, exc.steps_total)
+            row_str = f"{Colors.DIM}{eid}{Colors.RESET}  {_pad(func, max(inner - 43, 10))} {_pad(state_color(exc.state), 22)} {dur:>5s}  {bar}"
+            rows.append(row_str)
+        if not rows:
+            rows.append(f"{Colors.DIM}(none){Colors.RESET}")
+        lines.extend(_render_section("ACTIVE EXECUTIONS", rows, w))
+
+    # ── Running Tasks ──
+    if section_rows["running"] > 0 or data.running_tasks:
+        rows = []
+        for task in data.running_tasks[:section_rows.get("running", 3)]:
+            worker = truncate(task.worker_id, 12)
+            step = truncate(task.step_name, max(inner - 40, 10))
+            eid = task.execution_id[:8]
+            dur = ""
+            if task.started_at:
+                dur = f"{(datetime.now() - task.started_at).total_seconds():.1f}s"
+            rows.append(f"{Colors.DIM}{worker:<12}{Colors.RESET}  {_pad(step, max(inner - 40, 10))}  {eid}  {dur:>6s}")
+        if not rows:
+            rows.append(f"{Colors.DIM}(none){Colors.RESET}")
+        lines.extend(_render_section("RUNNING TASKS", rows, w))
+
+    # ── Recent Completions ──
+    if section_rows["recent"] > 0 or data.recent_completions:
+        rows = []
+        for comp in data.recent_completions[:section_rows.get("recent", 3)]:
+            eid = comp.id[:8]
+            # ExecutionState doesn't have root_function; use "?" or the stored value
+            func = truncate(comp.root_function, max(inner - 40, 10))
+            dur = format_duration(comp.duration) if comp.duration else "-"
+            icon = f"{Colors.GREEN}✓{Colors.RESET}" if comp.state == "completed" else f"{Colors.RED}✗{Colors.RESET}"
+            rows.append(f"{Colors.DIM}{eid}{Colors.RESET}  {_pad(func, max(inner - 40, 10))} {_pad(state_color(comp.state), 22)} {dur:>6s}  {icon}")
+        if not rows:
+            rows.append(f"{Colors.DIM}(none){Colors.RESET}")
+        lines.extend(_render_section("RECENT COMPLETIONS", rows, w))
+
+    # ── Queue Depth ──
+    if data.queue_depths:
+        rows = []
+        max_count = max(q.count for q in data.queue_depths) if data.queue_depths else 1
+        bar_max = max(inner - 25, 5)
+        for qd in data.queue_depths[:section_rows.get("queues", 3)]:
+            bar_len = round(qd.count / max(max_count, 1) * bar_max) if max_count > 0 else 0
+            bar = f"{Colors.CYAN}{'█' * bar_len}{Colors.RESET}"
+            rows.append(f"{qd.queue:<15} {bar} {qd.count}")
+        lines.extend(_render_section("QUEUE DEPTH", rows, w))
+
+    # ── DLQ ──
+    if data.dlq_entries:
+        title = f"DEAD LETTER QUEUE ({data.counts.dlq})"
+        rows = []
+        for dlr in data.dlq_entries[:section_rows.get("dlq", 3)]:
+            eid = dlr.task.id[:8]
+            step = truncate(dlr.task.step_name, max(inner - 40, 10))
+            moved = format_time_short(dlr.moved_at)
+            reason = truncate(dlr.reason or "", max(inner - 35, 10))
+            rows.append(f"{Colors.DIM}{eid}{Colors.RESET}  {step:<15}  {moved}  {Colors.RED}{reason}{Colors.RESET}")
+        lines.extend(_render_section(title, rows, w))
+
+    # ── Bottom border ──
+    lines.append("└" + "─" * (w - 2) + "┘")
+
+    # Footer
+    footer = "Ctrl+C to exit"
+    pad_left = (w - len(footer)) // 2
+    lines.append(" " * pad_left + f"{Colors.DIM}{footer}{Colors.RESET}")
+
+    return "\n".join(lines)
+
+
+def _allocate_rows(available: int, data_counts: dict[str, int]) -> dict[str, int]:
+    """Distribute available rows among sections proportionally.
+
+    Each section costs 2 lines overhead (separator + title), then data rows.
+    """
+    sections = [k for k, v in data_counts.items() if v > 0]
+    if not sections:
+        # Still show active/running/recent with 1 row each
+        return {k: 1 for k in data_counts}
+
+    # Overhead per visible section: 2 lines (hline + title)
+    overhead = len(sections) * 2
+    remaining = max(available - overhead, len(sections))
+
+    # First pass: everyone gets at least 1 row
+    alloc = {k: 0 for k in data_counts}
+    for k in sections:
+        alloc[k] = 1
+    remaining -= len(sections)
+
+    # Distribute rest proportionally, capped at actual data count
+    total_want = sum(max(data_counts[k] - 1, 0) for k in sections)
+    if total_want > 0 and remaining > 0:
+        for k in sections:
+            want = max(data_counts[k] - 1, 0)
+            extra = min(round(want / total_want * remaining), data_counts[k] - 1)
+            alloc[k] += extra
+
+    return alloc
+
+
+# ── Watch loop ───────────────────────────────────────────────────────────
 
 async def watch(executor: Stent, args):
-    """Live monitoring of executions and queues."""
+    """Live monitoring dashboard."""
+    tracker = ThroughputTracker()
+
     try:
-        import rich  # type: ignore  # noqa: F401
-        has_rich = True
-    except ImportError:
-        has_rich = False
-    
-    if has_rich:
-        await _watch_rich(executor, args)
-    else:
-        await _watch_simple(executor, args)
+        while True:
+            t0 = time.monotonic()
+            data = await _gather_dashboard_data(executor, active_limit=10, recent_limit=10)
+            data.gather_duration = time.monotonic() - t0
+
+            durations: list[float] = getattr(data, "_durations", [])
+            tracker.record(data.counts.task_completed, data.counts.task_failed, durations)
+            metrics = tracker.metrics()
+
+            try:
+                ts = os.get_terminal_size()
+                width, height = max(ts.columns, 60), max(ts.lines, 20)
+            except OSError:
+                width, height = 80, 24
+
+            frame = _render_dashboard(data, metrics, width, height)
+            sys.stdout.write("\033[2J\033[H" + frame)
+            sys.stdout.flush()
+
+            await asyncio.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\nExiting watch mode.")
 
 
 # ============================================================================
